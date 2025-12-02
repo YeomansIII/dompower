@@ -20,9 +20,19 @@ uv add dompower
 
 ## Authentication
 
-Dominion Energy uses CAPTCHA-protected login. Initial authentication requires manual browser login.
+### Option 1: Login with Username/Password (Recommended)
 
-### Getting Tokens
+The CLI supports direct login with two-factor authentication (TFA):
+
+```bash
+dompower login -u your.email@example.com
+```
+
+You'll be prompted for your password and then guided through TFA verification (SMS or email). Tokens are saved automatically.
+
+### Option 2: Manual Token Extraction
+
+If the login command doesn't work, you can manually extract tokens from a browser session:
 
 1. Open https://login.dominionenergy.com/CommonLogin?SelectedAppName=Electric
 2. Log in with your Dominion Energy credentials
@@ -61,6 +71,52 @@ dompower --token-file tokens.json usage -a 123456 -m 789 --json
 dompower --token-file tokens.json usage -a 123456 -m 789 --raw -o usage.xlsx
 ```
 
+### Login
+
+```bash
+# Interactive login with TFA support
+dompower login -u your.email@example.com
+
+# Specify output file and cookie storage
+dompower login -u your.email@example.com -o tokens.json --cookies ~/.dompower/cookies.json
+```
+
+Cookies are saved to enable TFA bypass on subsequent logins.
+
+### Account Discovery
+
+```bash
+# List all accounts and meters
+dompower --token-file tokens.json accounts
+
+# Include inactive/closed accounts
+dompower --token-file tokens.json accounts --all
+
+# Output as JSON
+dompower --token-file tokens.json accounts --json
+
+# Select default account/meter (interactive)
+dompower --token-file tokens.json select-account
+
+# Select specific account
+dompower --token-file tokens.json select-account -a 123456789
+```
+
+After selecting an account, you can omit `-a` and `-m` from usage commands.
+
+### Bill Forecast
+
+```bash
+# Get bill forecast with last bill details and current usage
+dompower --token-file tokens.json bill-forecast
+
+# For specific account
+dompower --token-file tokens.json bill-forecast -a 123456789
+
+# Output as JSON
+dompower --token-file tokens.json bill-forecast --json
+```
+
 ### Other Commands
 
 ```bash
@@ -68,14 +124,8 @@ dompower --token-file tokens.json usage -a 123456 -m 789 --raw -o usage.xlsx
 dompower --token-file tokens.json refresh
 
 # Show authentication instructions
-dompower --token-file tokens.json auth-info
+dompower auth-info
 ```
-
-### Finding Account and Meter Numbers
-
-Log into myaccount.dominionenergy.com and look for:
-- Account Number: Displayed on dashboard/bills
-- Meter Number: Found in account details or on your physical meter
 
 ## Library Usage
 
@@ -143,6 +193,43 @@ async def main():
         usage = await client.async_get_interval_usage(...)
 ```
 
+### Login with Username/Password
+
+```python
+import aiohttp
+from dompower import GigyaAuthenticator, TFAProvider
+
+async def login_with_tfa():
+    async with aiohttp.ClientSession() as session:
+        auth = GigyaAuthenticator(session)
+
+        # Initialize session (gets WAF and Gigya cookies)
+        await auth.async_init_session()
+
+        # Submit credentials
+        result = await auth.async_submit_credentials(
+            "your.email@example.com",
+            "your_password"
+        )
+
+        if result.tfa_required:
+            # Get available TFA targets
+            targets = await auth.async_get_tfa_options(TFAProvider.PHONE)
+
+            # Send verification code
+            await auth.async_send_tfa_code(targets[0])
+
+            # Get code from user and verify
+            code = input(f"Enter code sent to {targets[0].obfuscated}: ")
+            tokens = await auth.async_verify_tfa_code(code)
+        else:
+            # No TFA required
+            tokens = await auth._async_complete_login()
+
+        print(f"Access token: {tokens.access_token[:20]}...")
+        print(f"Refresh token: {tokens.refresh_token[:20]}...")
+```
+
 ### Home Assistant Integration Pattern
 
 ```python
@@ -193,8 +280,33 @@ DompowerClient(
 
 - `async_get_interval_usage(account_number, meter_number, start_date, end_date)` - Get 30-minute usage data
 - `async_get_raw_excel(account_number, meter_number, start_date, end_date)` - Get raw Excel file
+- `async_get_accounts()` - Get all accounts and meters for the authenticated user
+- `async_get_customer_info()` - Get customer profile with all accounts
+- `async_get_bill_forecast(account_number)` - Get bill forecast with last bill data
+- `async_login(username, password, tfa_code_callback)` - Login with username/password
 - `async_set_tokens(access_token, refresh_token)` - Set tokens manually
 - `async_refresh_tokens()` - Force token refresh
+
+### GigyaAuthenticator
+
+Handles Gigya/SAP authentication with TFA support. Use for step-by-step login flows.
+
+```python
+GigyaAuthenticator(
+    session: ClientSession,
+    cookie_file: Path | None = None,  # Persist cookies for TFA bypass
+)
+```
+
+**Methods:**
+
+- `async_init_session()` - Initialize WAF and Gigya cookies
+- `async_submit_credentials(username, password)` - Submit login credentials
+- `async_get_tfa_options(provider)` - Get available TFA targets (phone/email)
+- `async_send_tfa_code(target)` - Send verification code to target
+- `async_verify_tfa_code(code)` - Verify TFA code and get tokens
+- `async_login(username, password, tfa_callback)` - Complete login with callback
+- `save_cookies()` / `load_cookies()` - Persist cookies for TFA bypass
 
 ### Data Models
 
@@ -209,14 +321,19 @@ class IntervalUsageData:
 ### Exceptions
 
 ```python
-DompowerError              # Base exception
-AuthenticationError        # Authentication issues
-  InvalidAuthError         # Invalid tokens
-  TokenExpiredError        # Tokens expired, need browser re-auth
-  BrowserAuthRequiredError # Initial auth needed
-CannotConnectError         # Network issues
-ApiError                   # API returned error
-  RateLimitError          # Rate limited (429)
+DompowerError                # Base exception
+AuthenticationError          # Authentication issues
+  InvalidAuthError           # Invalid tokens
+  TokenExpiredError          # Tokens expired, need re-auth
+  BrowserAuthRequiredError   # Initial auth needed
+  GigyaError                 # Gigya authentication errors
+    InvalidCredentialsError  # Wrong username/password
+    TFARequiredError         # TFA required (not an error, normal flow)
+    TFAVerificationError     # TFA code verification failed
+    TFAExpiredError          # TFA session expired (~5 min timeout)
+CannotConnectError           # Network issues
+ApiError                     # API returned error
+  RateLimitError             # Rate limited (429)
 ```
 
 ## Data Format
@@ -234,7 +351,7 @@ Timestamp                 Consumption    Unit
 
 ## Limitations
 
-- Initial authentication requires manual browser login (CAPTCHA protected)
+- TFA verification codes expire after ~5 minutes
 - Refresh tokens may expire after extended periods of inactivity
 - API rate limits are not documented; library does not implement rate limiting
 
@@ -243,7 +360,7 @@ Timestamp                 Consumption    Unit
 ### With uv (recommended)
 
 ```bash
-git clone https://github.com/jyeo098/dompower
+git clone https://github.com/YeomansIII/dompower
 cd dompower
 uv sync --dev
 uv run pytest
@@ -254,7 +371,7 @@ uv run ruff check dompower
 ### With pip/venv
 
 ```bash
-git clone https://github.com/jyeo098/dompower
+git clone https://github.com/YeomansIII/dompower
 cd dompower
 python3 -m venv .venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
