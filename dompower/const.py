@@ -13,7 +13,9 @@ ENDPOINT_BILL_FORECAST: Final[str] = "/Service/api/1/bill/billForecast"
 ENDPOINT_ACCOUNTS: Final[str] = "/UsermanagementAPI/api/1/Account"
 ENDPOINT_USAGE_EXCEL: Final[str] = "/Service/api/1/Usage/DownloadExcelNew"
 ENDPOINT_GET_BP_NUMBER: Final[str] = "/Service/api/1/FromDb/GetBpNumber"
-ENDPOINT_GET_BUSINESS_MASTER: Final[str] = "/Service/api/1/BusinessMaster/GetBusinessMaster"
+ENDPOINT_GET_BUSINESS_MASTER: Final[str] = (
+    "/Service/api/1/BusinessMaster/GetBusinessMaster"
+)
 
 # Default Headers
 DEFAULT_HEADERS: Final[dict[str, str]] = {

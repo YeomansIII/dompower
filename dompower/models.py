@@ -275,7 +275,10 @@ class ServiceAddress:
 
     def __str__(self) -> str:
         """Return formatted address string."""
-        return f"{self.house_number} {self.street}, {self.city}, {self.state} {self.zip_code}"
+        return (
+            f"{self.house_number} {self.street}, "
+            f"{self.city}, {self.state} {self.zip_code}"
+        )
 
 
 @dataclass(frozen=True)

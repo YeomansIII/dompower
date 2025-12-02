@@ -54,7 +54,9 @@ class TestGigyaAuthenticatorLogin:
 
         # Mock the internal methods
         with patch.object(auth, "async_init_session", new_callable=AsyncMock):
-            with patch.object(auth, "_async_gigya_post", new_callable=AsyncMock) as mock_post:
+            with patch.object(
+                auth, "_async_gigya_post", new_callable=AsyncMock
+            ) as mock_post:
                 mock_post.return_value = {
                     "errorCode": GIGYA_ERROR_INVALID_PASSWORD,
                     "errorMessage": "Invalid Login or Password",
@@ -72,7 +74,9 @@ class TestGigyaAuthenticatorLogin:
         auth = GigyaAuthenticator(mock_session)
 
         with patch.object(auth, "async_init_session", new_callable=AsyncMock):
-            with patch.object(auth, "_async_gigya_post", new_callable=AsyncMock) as mock_post:
+            with patch.object(
+                auth, "_async_gigya_post", new_callable=AsyncMock
+            ) as mock_post:
                 mock_post.return_value = {
                     "errorCode": GIGYA_ERROR_TFA_PENDING,
                     "errorMessage": "Account Pending TFA Verification",
@@ -81,12 +85,14 @@ class TestGigyaAuthenticatorLogin:
                     "id_token": "test-id-token",
                 }
 
-                result = await auth.async_submit_credentials("user@example.com", "password")
+                result = await auth.async_submit_credentials(
+                    "user@example.com", "password"
+                )
 
                 assert result.tfa_required is True
                 assert result.success is False
-                assert result.reg_token == "test-reg-token"
-                assert auth._gigya_session.reg_token == "test-reg-token"
+                assert result.reg_token == "test-reg-token"  # noqa: S105
+                assert auth._gigya_session.reg_token == "test-reg-token"  # noqa: S105
 
     @pytest.mark.asyncio
     async def test_login_success_no_tfa(self, mock_session: MagicMock) -> None:
@@ -94,7 +100,9 @@ class TestGigyaAuthenticatorLogin:
         auth = GigyaAuthenticator(mock_session)
 
         with patch.object(auth, "async_init_session", new_callable=AsyncMock):
-            with patch.object(auth, "_async_gigya_post", new_callable=AsyncMock) as mock_post:
+            with patch.object(
+                auth, "_async_gigya_post", new_callable=AsyncMock
+            ) as mock_post:
                 mock_post.return_value = {
                     "errorCode": 0,
                     "UID": "test-uid",
@@ -104,11 +112,13 @@ class TestGigyaAuthenticatorLogin:
                     },
                 }
 
-                result = await auth.async_submit_credentials("user@example.com", "password")
+                result = await auth.async_submit_credentials(
+                    "user@example.com", "password"
+                )
 
                 assert result.success is True
                 assert result.tfa_required is False
-                assert auth._gigya_session.login_token == "test-login-token"
+                assert auth._gigya_session.login_token == "test-login-token"  # noqa: S105
 
 
 class TestTFAVerification:
@@ -119,7 +129,7 @@ class TestTFAVerification:
         """Test TFA verification with invalid code raises TFAVerificationError."""
         auth = GigyaAuthenticator(mock_session)
         auth._gigya_session.gigya_assertion = "test-assertion"
-        auth._gigya_session.reg_token = "test-reg-token"
+        auth._gigya_session.reg_token = "test-reg-token"  # noqa: S105
 
         with patch.object(auth, "_async_gigya_get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = {
@@ -189,10 +199,10 @@ class TestModels:
     def test_token_pair_creation(self) -> None:
         """Test TokenPair dataclass."""
         pair = TokenPair(
-            access_token="access-123",
-            refresh_token="refresh-456",
+            access_token="access-123",  # noqa: S106
+            refresh_token="refresh-456",  # noqa: S106
         )
 
-        assert pair.access_token == "access-123"
-        assert pair.refresh_token == "refresh-456"
+        assert pair.access_token == "access-123"  # noqa: S105
+        assert pair.refresh_token == "refresh-456"  # noqa: S105
         assert pair.expires_at is None

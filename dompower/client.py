@@ -350,8 +350,8 @@ class DompowerClient:
         """Parse Excel usage data into IntervalUsageData objects.
 
         The Excel file is in wide format:
-        - Row 1: Headers (Account No, Recorder ID, Date, 12:00 AM kWH, 12:30 AM kWH, ...)
-        - Row 2+: Data rows with date in column C and 48 half-hour readings in columns D-AY
+        - Row 1: Headers (Account No, Recorder ID, Date, 12:00 AM kWH, ...)
+        - Row 2+: Data rows with date in column C and 48 half-hour readings
 
         Args:
             excel_data: Raw Excel file bytes.
@@ -376,7 +376,7 @@ class DompowerClient:
         usage_data: list[IntervalUsageData] = []
 
         # Get header row to parse time slots
-        headers = list(sheet.iter_rows(min_row=1, max_row=1, values_only=True))[0]
+        headers = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
 
         # Parse time slots from headers (columns D onwards, index 3+)
         # Format: "12:00 AM kWH", "12:30 AM kWH", etc.
@@ -614,7 +614,8 @@ class DompowerClient:
             decoded = base64.urlsafe_b64decode(payload)
             claims = json.loads(decoded)
             uuid = str(claims.get("Uuid", ""))
-            _LOGGER.debug("Extracted UUID from token: %s", uuid[:8] + "..." if uuid else "none")
+            uuid_display = uuid[:8] + "..." if uuid else "none"
+            _LOGGER.debug("Extracted UUID from token: %s", uuid_display)
             return uuid
 
         except Exception as err:

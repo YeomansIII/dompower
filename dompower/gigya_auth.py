@@ -235,7 +235,9 @@ class GigyaAuthenticator:
             "password": password,
             "sessionExpiration": "31556952",
             "targetEnv": "jssdk",
-            "include": "profile,data,emails,subscriptions,preferences,id_token,groups,loginIDs,",
+            "include": (
+                "profile,data,emails,subscriptions,preferences,id_token,groups,loginIDs,"
+            ),
             "includeUserInfo": "true",
             "captchaToken": "0",
             "captchaType": "reCaptchaEnterpriseScore",
@@ -471,7 +473,8 @@ class GigyaAuthenticator:
             )
 
         provider_assertion = response.get("providerAssertion", "")
-        _LOGGER.debug("Got providerAssertion, length: %d", len(provider_assertion) if provider_assertion else 0)
+        assertion_len = len(provider_assertion) if provider_assertion else 0
+        _LOGGER.debug("Got providerAssertion, length: %d", assertion_len)
 
         # Step 8: Finalize TFA
         await self._async_finalize_tfa(str(provider_assertion))
@@ -594,7 +597,9 @@ class GigyaAuthenticator:
         headers = {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Referer": "https://myaccount.dominionenergy.com/",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+            ),
         }
 
         try:
@@ -703,8 +708,10 @@ class GigyaAuthenticator:
     async def _async_finalize_tfa(self, provider_assertion: str) -> None:
         """Step 8: Finalize TFA (marks TFA as complete)."""
         _LOGGER.debug("Finalizing TFA")
-        _LOGGER.debug("gigyaAssertion length: %d", len(self._gigya_session.gigya_assertion or ""))
-        _LOGGER.debug("providerAssertion length: %d", len(provider_assertion) if provider_assertion else 0)
+        gigya_len = len(self._gigya_session.gigya_assertion or "")
+        _LOGGER.debug("gigyaAssertion length: %d", gigya_len)
+        provider_len = len(provider_assertion) if provider_assertion else 0
+        _LOGGER.debug("providerAssertion length: %d", provider_len)
 
         # finalizeTFA is a GET request with gigyaAssertion in params
         params = {
@@ -724,7 +731,8 @@ class GigyaAuthenticator:
 
         error_code = response.get("errorCode", 0)
         if error_code != 0:
-            _LOGGER.error("finalizeTFA failed: %d - %s", error_code, response.get("errorMessage"))
+            err_msg = response.get("errorMessage")
+            _LOGGER.error("finalizeTFA failed: %d - %s", error_code, err_msg)
             _LOGGER.debug("finalizeTFA response: %s", response)
 
         _LOGGER.debug("TFA finalized successfully")
@@ -736,7 +744,9 @@ class GigyaAuthenticator:
         params = {
             "regToken": self._gigya_session.reg_token,
             "targetEnv": "jssdk",
-            "include": "profile,data,emails,subscriptions,preferences,id_token,groups,loginIDs,",
+            "include": (
+                "profile,data,emails,subscriptions,preferences,id_token,groups,loginIDs,"
+            ),
             "includeUserInfo": "true",
             "APIKey": GIGYA_API_KEY,
             "source": "showScreenSet",
@@ -750,7 +760,8 @@ class GigyaAuthenticator:
 
         error_code = response.get("errorCode", 0)
         if error_code != 0:
-            _LOGGER.error("finalizeRegistration failed: %d - %s", error_code, response.get("errorMessage"))
+            err_msg = response.get("errorMessage")
+            _LOGGER.error("finalizeRegistration failed: %d - %s", error_code, err_msg)
             _LOGGER.debug("finalizeRegistration response: %s", response)
 
         session_info = response.get("sessionInfo", {})
@@ -782,7 +793,8 @@ class GigyaAuthenticator:
     async def _async_get_account_info(self) -> str:
         """Step 9: Get account info and fresh id_token."""
         _LOGGER.debug("Getting account info")
-        _LOGGER.debug("login_token available: %s", bool(self._gigya_session.login_token))
+        has_token = bool(self._gigya_session.login_token)
+        _LOGGER.debug("login_token available: %s", has_token)
 
         # Set login_token as cookie
         if self._gigya_session.login_token:
@@ -806,12 +818,14 @@ class GigyaAuthenticator:
 
         error_code = response.get("errorCode", 0)
         if error_code != 0:
-            _LOGGER.error("getAccountInfo failed: %d - %s", error_code, response.get("errorMessage"))
+            err_msg = response.get("errorMessage")
+            _LOGGER.error("getAccountInfo failed: %d - %s", error_code, err_msg)
 
         id_token = str(response.get("id_token", ""))
 
         if not id_token:
-            _LOGGER.error("No id_token in getAccountInfo response. Keys: %s", list(response.keys()))
+            keys = list(response.keys())
+            _LOGGER.error("No id_token in getAccountInfo response. Keys: %s", keys)
         else:
             _LOGGER.debug("Fresh id_token obtained (length: %d)", len(id_token))
 
@@ -843,11 +857,17 @@ class GigyaAuthenticator:
         }
 
         try:
-            async with self._session.post(url, headers=headers, json=payload) as response:
+            async with self._session.post(
+                url, headers=headers, json=payload
+            ) as response:
                 if response.status != 200:
                     text = await response.text()
-                    _LOGGER.error("Token exchange HTTP error: %d - %s", response.status, text)
-                    raise GigyaError(f"Token exchange failed: {response.status} - {text}")
+                    _LOGGER.error(
+                        "Token exchange HTTP error: %d - %s", response.status, text
+                    )
+                    raise GigyaError(
+                        f"Token exchange failed: {response.status} - {text}"
+                    )
 
                 data = await response.json()
                 _LOGGER.debug("Token exchange response: %s", data)

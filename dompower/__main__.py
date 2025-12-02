@@ -523,7 +523,10 @@ async def cmd_auth_helper(args: argparse.Namespace) -> int:
             print("Tokens are valid!")
 
     except TokenExpiredError:
-        print("Warning: Refresh token may be expired. Saving anyway...", file=sys.stderr)
+        print(
+            "Warning: Refresh token may be expired. Saving anyway...",
+            file=sys.stderr,
+        )
     except DompowerError as e:
         print(f"Warning: Could not validate tokens: {e}", file=sys.stderr)
         print("Saving tokens anyway - they may still work.", file=sys.stderr)
@@ -598,14 +601,14 @@ async def cmd_login(args: argparse.Namespace) -> int:
                     phone_targets = await auth.async_get_tfa_options(TFAProvider.PHONE)
                     all_targets.extend(phone_targets)
                 except Exception:
-                    pass
+                    logging.debug("Could not get phone TFA options")
 
                 # Try to get email targets
                 try:
                     email_targets = await auth.async_get_tfa_options(TFAProvider.EMAIL)
                     all_targets.extend(email_targets)
                 except Exception:
-                    pass
+                    logging.debug("Could not get email TFA options")
 
                 if not all_targets:
                     print("Error: No TFA options available", file=sys.stderr)
@@ -615,7 +618,8 @@ async def cmd_login(args: argparse.Namespace) -> int:
                 print()
                 print("Select verification method:")
                 for i, target in enumerate(all_targets, 1):
-                    provider_name = "SMS" if target.provider == TFAProvider.PHONE else "Email"
+                    is_phone = target.provider == TFAProvider.PHONE
+                    provider_name = "SMS" if is_phone else "Email"
                     print(f"  {i}. {provider_name}: {target.obfuscated}")
 
                 # Get selection
@@ -632,7 +636,8 @@ async def cmd_login(args: argparse.Namespace) -> int:
                         print("Please enter a valid number")
 
                 # Send verification code
-                provider_name = "SMS" if selected_target.provider == TFAProvider.PHONE else "email"
+                is_phone = selected_target.provider == TFAProvider.PHONE
+                provider_name = "SMS" if is_phone else "email"
                 print(f"\nSending verification code via {provider_name}...")
                 await auth.async_send_tfa_code(selected_target)
 
@@ -719,7 +724,9 @@ async def cmd_accounts(args: argparse.Namespace) -> int:
                         "is_active": acct.is_active,
                         "is_default": acct.is_default,
                         "ebill_enrolled": acct.ebill_enrolled,
-                        "closing_date": acct.closing_date.isoformat() if acct.closing_date else None,
+                        "closing_date": (
+                            acct.closing_date.isoformat() if acct.closing_date else None
+                        ),
                         "meters": [
                             {
                                 "device_id": m.device_id,
@@ -738,7 +745,8 @@ async def cmd_accounts(args: argparse.Namespace) -> int:
         else:
             # Human-readable output
             print()
-            print(f"Customer: {customer_info.customer_number} ({customer_info.full_name})")
+            cust_num = customer_info.customer_number
+            print(f"Customer: {cust_num} ({customer_info.full_name})")
             print(f"Email: {customer_info.email}")
             print()
 
@@ -757,7 +765,8 @@ async def cmd_accounts(args: argparse.Namespace) -> int:
                     meter_status = "Active" if meter.is_active else "Inactive"
                     ami_flag = ", AMI" if meter.has_ami else ""
                     net_flag = ", Net Metering" if meter.net_metering else ""
-                    print(f"  Meter: {meter.device_id} ({meter_status}{ami_flag}{net_flag})")
+                    flags = f"{meter_status}{ami_flag}{net_flag}"
+                    print(f"  Meter: {meter.device_id} ({flags})")
 
                 # Status line
                 ebill = "Yes" if acct.ebill_enrolled else "No"
