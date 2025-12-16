@@ -317,16 +317,17 @@ class DompowerClient:
             ApiError: If the API returns an error.
         """
         payload = {
+            "Format": "Csv",
             "accountNumber": account_number,
-            "meterNumber": meter_number,
+            "meterIds": [meter_number],
             "uom": "kWh",
-            "periodicity": "HH",  # Half-hourly
+            "periodicity": "HH",
             "serviceType": service_type.value,
             "decimalPlaces": "2",
             "isNetUsage": "false",
             "displayUnit": "kWh",
-            "startDate": start_date.isoformat(),
-            "endDate": end_date.isoformat(),
+            "from": start_date.isoformat(),
+            "to": end_date.isoformat(),
         }
 
         _LOGGER.debug(
