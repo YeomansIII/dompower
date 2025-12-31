@@ -6,8 +6,9 @@ import base64
 import io
 import json
 import logging
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 from .auth import TokenManager, TokenUpdateCallback
 from .const import (
@@ -39,6 +40,9 @@ if TYPE_CHECKING:
     from aiohttp import ClientSession
 
 _LOGGER = logging.getLogger(__name__)
+
+# Dominion Energy operates exclusively in Eastern time zone
+DOMINION_TIMEZONE = ZoneInfo("America/New_York")
 
 
 class DompowerClient:
@@ -448,7 +452,7 @@ class DompowerClient:
                     row_date.day,
                     hour,
                     minute,
-                    tzinfo=UTC,
+                    tzinfo=DOMINION_TIMEZONE,
                 )
 
                 usage_data.append(
