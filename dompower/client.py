@@ -388,81 +388,98 @@ class DompowerClient:
             ) from err
 
         workbook = openpyxl.load_workbook(io.BytesIO(excel_data), data_only=True)
-        sheet = workbook.active
+        consumption_sheet = workbook.active
+        generation_sheet = workbook["kWH Generation"]
 
-        if sheet is None:
+        if consumption_sheet is None:
             return []
 
-        usage_data: list[IntervalUsageData] = []
+        # parse data from an arbitrary worksheet into a dict for later recombining
+        def _parse_worksheet(sheet: openpyxl.WorkSheet) -> dict[datetime, float]:
+            return_dict: dict[datetime, float] = {}
 
-        # Get header row to parse time slots
-        headers = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
+            # Get header row to parse time slots
+            headers = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
 
-        # Parse time slots from headers (columns D onwards, index 3+)
-        # Format: "12:00 AM kWH", "12:30 AM kWH", etc.
-        time_slots: list[tuple[int, int]] = []  # (hour, minute) for each column
-        for header in headers[3:]:  # Skip Account No, Recorder ID, Date
-            if header is None or not isinstance(header, str):
-                continue
-            # Parse "HH:MM AM/PM kWH" format
-            try:
-                time_part = header.replace(" kWH", "").strip()
-                parsed_time = datetime.strptime(time_part, "%I:%M %p")
-                time_slots.append((parsed_time.hour, parsed_time.minute))
-            except ValueError:
-                _LOGGER.warning("Failed to parse time header: %s", header)
-                continue
-
-        # Process data rows (row 2 onwards)
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            if not row or len(row) < 4:
-                continue
-
-            date_val = row[2]  # Date is in column C (index 2)
-
-            # Parse the date
-            if isinstance(date_val, datetime):
-                row_date = date_val.date()
-            elif isinstance(date_val, str):
+            # Parse time slots from headers (columns D onwards, index 3+)
+            # Format: "12:00 AM kWH", "12:30 AM kWH", etc.
+            time_slots: list[tuple[int, int]] = []  # (hour, minute) for each column
+            for header in headers[3:]:  # Skip Account No, Recorder ID, Date
+                if header is None or not isinstance(header, str):
+                    continue
+                # Parse "HH:MM AM/PM kWH" format
                 try:
-                    row_date = datetime.strptime(date_val, "%m/%d/%Y").date()
+                    # The Generation spreadsheet uses kW in the column title, but
+                    # data is actually in KWh as reflected by sheet name
+                    time_part = header.replace(" kWH", "").replace(" kW", "").strip()
+                    parsed_time = datetime.strptime(time_part, "%I:%M %p")
+                    time_slots.append((parsed_time.hour, parsed_time.minute))
                 except ValueError:
-                    _LOGGER.warning("Failed to parse date: %s", date_val)
-                    continue
-            else:
-                continue
-
-            # Process each time slot (columns D onwards, index 3+)
-            for i, consumption_val in enumerate(row[3:]):
-                if i >= len(time_slots):
-                    break
-
-                if consumption_val is None:
+                    _LOGGER.warning("Failed to parse time header: %s", header)
                     continue
 
-                try:
-                    consumption = float(consumption_val)
-                except (ValueError, TypeError):
+            # Process data rows (row 2 onwards)
+            for row in sheet.iter_rows(min_row=2, values_only=True):
+                if not row or len(row) < 4:
                     continue
 
-                hour, minute = time_slots[i]
-                timestamp = datetime(
-                    row_date.year,
-                    row_date.month,
-                    row_date.day,
-                    hour,
-                    minute,
-                    tzinfo=DOMINION_TIMEZONE,
-                )
+                date_val = row[2]  # Date is in column C (index 2)
 
-                usage_data.append(
-                    IntervalUsageData(
+                # Parse the date
+                if isinstance(date_val, datetime):
+                    row_date = date_val.date()
+                elif isinstance(date_val, str):
+                    try:
+                        row_date = datetime.strptime(date_val, "%m/%d/%Y").date()
+                    except ValueError:
+                        _LOGGER.warning("Failed to parse date: %s", date_val)
+                        continue
+                else:
+                    continue
+
+                # Process each time slot (columns D onwards, index 3+)
+                for i, val in enumerate(row[3:]):
+                    if i >= len(time_slots):
+                        break
+
+                    if val is None:
+                        continue
+
+                    try:
+                        cell_value = float(val)
+                    except (ValueError, TypeError):
+                        continue
+
+                    hour, minute = time_slots[i]
+                    timestamp = datetime(
+                        row_date.year,
+                        row_date.month,
+                        row_date.day,
+                        hour,
+                        minute,
+                        tzinfo=DOMINION_TIMEZONE,
+                    )
+                    return_dict[timestamp] = cell_value
+            return return_dict
+
+        consumption_dict = _parse_worksheet(consumption_sheet)
+
+        if generation_sheet is not None:
+            generation_dict = _parse_worksheet(generation_sheet)
+        else:
+            generation_dict = {}
+
+        # Recombine consumption and generation data (if present)
+        usage_data: list[IntervalUsageData] = []
+        for timestamp, consumption in consumption_dict.items():
+            usage_data.append(
+                IntervalUsageData(
                         timestamp=timestamp,
                         consumption=consumption,
-                        generation=0,
+                        generation=generation_dict.get(timestamp, 0),
                         unit="kWh",
                     )
-                )
+            )
 
         # Filter to requested date range (API may return more data than requested)
         usage_data = [

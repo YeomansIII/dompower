@@ -379,7 +379,8 @@ async def cmd_usage(args: argparse.Namespace) -> int:
                 print(f"Usage data from {start_date} to {end_date}")
                 print(f"Total records: {len(usage_data)}")
                 print()
-                print(f"{'Timestamp':<25} {'Consumption':>12} {'Generation':12} {'Unit':<6}")
+                print(f"{'Timestamp':<25} {'Consumption':>12} "
+                      f"{'Generation':>12} {'Unit':<6}")
                 print("-" * 57)
                 for u in usage_data[:20]:  # Show first 20
                     print(
