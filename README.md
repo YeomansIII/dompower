@@ -315,7 +315,8 @@ GigyaAuthenticator(
 class IntervalUsageData:
     timestamp: datetime  # Start of 30-minute interval
     consumption: float   # kWh consumed
-    unit: str           # "kWh"
+    generation: float    # kWh excess generation returned to grid
+    unit: str            # "kWh"
 ```
 
 ### Exceptions
@@ -341,11 +342,11 @@ ApiError                     # API returned error
 The API returns 30-minute interval data. Example output:
 
 ```
-Timestamp                 Consumption    Unit
----------------------------------------------
-2024-01-15 00:00          0.45           kWh
-2024-01-15 00:30          0.38           kWh
-2024-01-15 01:00          0.42           kWh
+Timestamp                  Consumption   Generation Unit  
+---------------------------------------------------------
+2024-01-15 00:00                  0.45         0.01 kWh
+2024-01-15 00:30                  0.38         0.00 kWh
+2024-01-15 01:00                  0.42         0.01 kWh
 ...
 ```
 
