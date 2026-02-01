@@ -459,6 +459,7 @@ class DompowerClient:
                     IntervalUsageData(
                         timestamp=timestamp,
                         consumption=consumption,
+                        generation=0,
                         unit="kWh",
                     )
                 )

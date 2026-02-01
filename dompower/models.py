@@ -103,11 +103,13 @@ class IntervalUsageData:
     Attributes:
         timestamp: Start time of the 30-minute interval.
         consumption: Amount of energy consumed in kWh.
+        generation: Excess energy generated and returned to Dominion in kWh.
         unit: Unit of measurement (typically "kWh").
     """
 
     timestamp: datetime
     consumption: float
+    generation: float
     unit: str = "kWh"
 
 

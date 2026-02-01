@@ -369,6 +369,7 @@ async def cmd_usage(args: argparse.Namespace) -> int:
                     {
                         "timestamp": u.timestamp.isoformat(),
                         "consumption": u.consumption,
+                        "generation": u.generation,
                         "unit": u.unit,
                     }
                     for u in usage_data
@@ -378,12 +379,12 @@ async def cmd_usage(args: argparse.Namespace) -> int:
                 print(f"Usage data from {start_date} to {end_date}")
                 print(f"Total records: {len(usage_data)}")
                 print()
-                print(f"{'Timestamp':<25} {'Consumption':>12} {'Unit':<6}")
-                print("-" * 45)
+                print(f"{'Timestamp':<25} {'Consumption':>12} {'Generation':12} {'Unit':<6}")
+                print("-" * 57)
                 for u in usage_data[:20]:  # Show first 20
                     print(
                         f"{u.timestamp.strftime('%Y-%m-%d %H:%M'):<25} "
-                        f"{u.consumption:>12.2f} {u.unit:<6}"
+                        f"{u.consumption:>12.2f} {u.generation:>12.2f} {u.unit:<6}"
                     )
                 if len(usage_data) > 20:
                     print(f"... and {len(usage_data) - 20} more records")
