@@ -109,7 +109,7 @@ class IntervalUsageData:
 
     timestamp: datetime
     consumption: float
-    generation: float
+    generation: float = 0.0
     unit: str = "kWh"
 
 

@@ -389,13 +389,14 @@ class DompowerClient:
 
         workbook = openpyxl.load_workbook(io.BytesIO(excel_data), data_only=True)
         consumption_sheet = workbook.active
-        generation_sheet = workbook["kWH Generation"]
 
         if consumption_sheet is None:
             return []
 
         # parse data from an arbitrary worksheet into a dict for later recombining
-        def _parse_worksheet(sheet: openpyxl.WorkSheet) -> dict[datetime, float]:
+        def _parse_worksheet(
+            sheet: openpyxl.worksheet.worksheet.Worksheet
+        ) -> dict[datetime, float]:
             return_dict: dict[datetime, float] = {}
 
             # Get header row to parse time slots
@@ -464,8 +465,8 @@ class DompowerClient:
 
         consumption_dict = _parse_worksheet(consumption_sheet)
 
-        if generation_sheet is not None:
-            generation_dict = _parse_worksheet(generation_sheet)
+        if "kWH Generation" in workbook.sheetnames:
+            generation_dict = _parse_worksheet(workbook["kWH Generation"])
         else:
             generation_dict = {}
 
