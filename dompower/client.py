@@ -395,7 +395,7 @@ class DompowerClient:
 
         # parse data from an arbitrary worksheet into a dict for later recombining
         def _parse_worksheet(
-            sheet: openpyxl.worksheet.worksheet.Worksheet
+            sheet: openpyxl.worksheet.worksheet.Worksheet,
         ) -> dict[datetime, float]:
             return_dict: dict[datetime, float] = {}
 
@@ -475,11 +475,11 @@ class DompowerClient:
         for timestamp, consumption in consumption_dict.items():
             usage_data.append(
                 IntervalUsageData(
-                        timestamp=timestamp,
-                        consumption=consumption,
-                        generation=generation_dict.get(timestamp, 0),
-                        unit="kWh",
-                    )
+                    timestamp=timestamp,
+                    consumption=consumption,
+                    generation=generation_dict.get(timestamp, 0),
+                    unit="kWh",
+                )
             )
 
         # Filter to requested date range (API may return more data than requested)
