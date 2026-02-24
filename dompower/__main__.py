@@ -379,8 +379,10 @@ async def cmd_usage(args: argparse.Namespace) -> int:
                 print(f"Usage data from {start_date} to {end_date}")
                 print(f"Total records: {len(usage_data)}")
                 print()
-                print(f"{'Timestamp':<25} {'Consumption':>12} "
-                      f"{'Generation':>12} {'Unit':<6}")
+                print(
+                    f"{'Timestamp':<25} {'Consumption':>12} "
+                    f"{'Generation':>12} {'Unit':<6}"
+                )
                 print("-" * 57)
                 for u in usage_data[:20]:  # Show first 20
                     print(
@@ -496,7 +498,7 @@ async def cmd_auth_helper(args: argparse.Namespace) -> int:
     print("Enter your tokens below (paste and press Enter):")
     print()
 
-    access_token = input("Access Token: ").strip()
+    access_token = (await asyncio.to_thread(input, "Access Token: ")).strip()
     if access_token.startswith("Bearer "):
         access_token = access_token[7:]
 
@@ -504,7 +506,7 @@ async def cmd_auth_helper(args: argparse.Namespace) -> int:
         print("Error: Access token is required", file=sys.stderr)
         return 1
 
-    refresh_token = input("Refresh Token: ").strip()
+    refresh_token = (await asyncio.to_thread(input, "Refresh Token: ")).strip()
     if not refresh_token:
         print("Error: Refresh token is required", file=sys.stderr)
         return 1
@@ -560,7 +562,7 @@ async def cmd_login(args: argparse.Namespace) -> int:
     # Get credentials
     username = args.username
     if not username:
-        username = input("Email: ").strip()
+        username = (await asyncio.to_thread(input, "Email: ")).strip()
         if not username:
             print("Error: Email is required", file=sys.stderr)
             return 1
@@ -627,7 +629,8 @@ async def cmd_login(args: argparse.Namespace) -> int:
                 # Get selection
                 print()
                 while True:
-                    selection = input(f"Enter choice (1-{len(all_targets)}): ").strip()
+                    prompt = f"Enter choice (1-{len(all_targets)}): "
+                    selection = (await asyncio.to_thread(input, prompt)).strip()
                     try:
                         idx = int(selection) - 1
                         if 0 <= idx < len(all_targets):
@@ -648,7 +651,7 @@ async def cmd_login(args: argparse.Namespace) -> int:
                 print("-" * 40)
                 print(f"Code sent to: {selected_target.obfuscated}")
                 print("-" * 40)
-                code = input("Enter code: ").strip()
+                code = (await asyncio.to_thread(input, "Enter code: ")).strip()
 
                 # Verify code
                 print("\nVerifying...")
@@ -831,7 +834,8 @@ async def cmd_select_account(args: argparse.Namespace) -> int:
 
             print()
             while True:
-                selection = input(f"Enter choice (1-{len(accounts)}): ").strip()
+                prompt = f"Enter choice (1-{len(accounts)}): "
+                selection = (await asyncio.to_thread(input, prompt)).strip()
                 try:
                     idx = int(selection) - 1
                     if 0 <= idx < len(accounts):
