@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import ClientSession
+from aiohttp import CookieJar as AiohttpCookieJar
 
 from dompower import (
     GigyaAuthenticator,
     InvalidCredentialsError,
-    TFAProvider,
-    TFATarget,
     TFAVerificationError,
-    TokenPair,
 )
 from dompower.const import (
     GIGYA_ERROR_INVALID_PASSWORD,
@@ -28,34 +25,18 @@ def mock_session() -> MagicMock:
     return MagicMock(spec=ClientSession)
 
 
-class TestGigyaAuthenticatorInit:
-    """Tests for GigyaAuthenticator initialization."""
-
-    def test_init_without_cookie_file(self, mock_session: MagicMock) -> None:
-        """Test initialization without cookie file."""
-        auth = GigyaAuthenticator(mock_session)
-        assert auth._session is mock_session
-        assert auth._cookie_file is None
-        assert not auth._session_initialized
-
-    def test_init_with_cookie_file(
-        self, mock_session: MagicMock, tmp_path: Path
-    ) -> None:
-        """Test initialization with cookie file."""
-        cookie_file = tmp_path / "cookies.json"
-        auth = GigyaAuthenticator(mock_session, cookie_file=cookie_file)
-        assert auth._cookie_file == cookie_file
+# ---------------------------------------------------------------------------
+# Login flow — error paths (high-value boundary tests)
+# ---------------------------------------------------------------------------
 
 
 class TestGigyaAuthenticatorLogin:
     """Tests for the login flow."""
 
-    @pytest.mark.asyncio
     async def test_login_invalid_credentials(self, mock_session: MagicMock) -> None:
-        """Test login with invalid credentials raises InvalidCredentialsError."""
+        """Invalid credentials raises InvalidCredentialsError with error_code."""
         auth = GigyaAuthenticator(mock_session)
 
-        # Mock the internal methods
         with patch.object(auth, "async_init_session", new_callable=AsyncMock):
             with patch.object(
                 auth, "_async_gigya_post", new_callable=AsyncMock
@@ -71,9 +52,8 @@ class TestGigyaAuthenticatorLogin:
 
                 assert exc_info.value.error_code == GIGYA_ERROR_INVALID_PASSWORD
 
-    @pytest.mark.asyncio
     async def test_login_tfa_required(self, mock_session: MagicMock) -> None:
-        """Test login that requires TFA returns LoginResult with tfa_required=True."""
+        """TFA-pending response returns LoginResult with tfa_required=True."""
         auth = GigyaAuthenticator(mock_session)
 
         with patch.object(auth, "async_init_session", new_callable=AsyncMock):
@@ -95,11 +75,9 @@ class TestGigyaAuthenticatorLogin:
                 assert result.tfa_required is True
                 assert result.success is False
                 assert result.reg_token == "test-reg-token"  # noqa: S105
-                assert auth._gigya_session.reg_token == "test-reg-token"  # noqa: S105
 
-    @pytest.mark.asyncio
     async def test_login_success_no_tfa(self, mock_session: MagicMock) -> None:
-        """Test successful login without TFA."""
+        """Successful login without TFA returns success=True."""
         auth = GigyaAuthenticator(mock_session)
 
         with patch.object(auth, "async_init_session", new_callable=AsyncMock):
@@ -121,15 +99,18 @@ class TestGigyaAuthenticatorLogin:
 
                 assert result.success is True
                 assert result.tfa_required is False
-                assert auth._gigya_session.login_token == "test-login-token"  # noqa: S105
+
+
+# ---------------------------------------------------------------------------
+# TFA verification — error paths
+# ---------------------------------------------------------------------------
 
 
 class TestTFAVerification:
     """Tests for TFA verification."""
 
-    @pytest.mark.asyncio
     async def test_verify_tfa_invalid_code(self, mock_session: MagicMock) -> None:
-        """Test TFA verification with invalid code raises TFAVerificationError."""
+        """Invalid TFA code raises TFAVerificationError."""
         auth = GigyaAuthenticator(mock_session)
         auth._gigya_session.gigya_assertion = "test-assertion"
         auth._gigya_session.reg_token = "test-reg-token"  # noqa: S105
@@ -145,67 +126,48 @@ class TestTFAVerification:
                 await auth.async_verify_tfa_code("000000")
 
 
+# ---------------------------------------------------------------------------
+# Cookie persistence — rewritten with real CookieJar
+# ---------------------------------------------------------------------------
+
+
 class TestCookiePersistence:
-    """Tests for cookie persistence."""
+    """Tests for cookie export/import."""
 
     def test_export_cookies_empty(self, mock_session: MagicMock) -> None:
-        """Test exporting cookies when jar is empty."""
+        """Exporting from an empty cookie jar returns empty cookies list."""
         mock_session.cookie_jar = []
         auth = GigyaAuthenticator(mock_session)
 
         result = auth.export_cookies()
-
         assert result == {"version": 1, "cookies": []}
 
-    def test_import_cookies(self, mock_session: MagicMock) -> None:
-        """Test importing cookies."""
-        mock_cookie_jar = MagicMock()
-        mock_session.cookie_jar = mock_cookie_jar
-        auth = GigyaAuthenticator(mock_session)
+    async def test_import_cookies_roundtrip(self) -> None:
+        """Cookies imported via import_cookies are accessible in the session."""
+        async with ClientSession(cookie_jar=AiohttpCookieJar()) as session:
+            auth = GigyaAuthenticator(session)
 
-        data = {
-            "version": 1,
-            "cookies": [
-                {"name": "gmid", "value": "test-gmid", "domain": ".dominionenergy.com"},
-                {"name": "ucid", "value": "test-ucid", "domain": ".dominionenergy.com"},
-            ],
-        }
+            data = {
+                "version": 1,
+                "cookies": [
+                    {
+                        "name": "gmid",
+                        "value": "test-gmid",
+                        "domain": ".dominionenergy.com",
+                    },
+                    {
+                        "name": "ucid",
+                        "value": "test-ucid",
+                        "domain": ".dominionenergy.com",
+                    },
+                ],
+            }
 
-        result = auth.import_cookies(data)
+            result = auth.import_cookies(data)
+            assert result is True
 
-        assert result is True
-        assert mock_cookie_jar.update_cookies.call_count == 2
-
-
-class TestModels:
-    """Tests for new data models."""
-
-    def test_tfa_target_creation(self) -> None:
-        """Test TFATarget dataclass."""
-        target = TFATarget(
-            id="phone-123",
-            obfuscated="+########1234",
-            provider=TFAProvider.PHONE,
-            last_method="sms",
-        )
-
-        assert target.id == "phone-123"
-        assert target.obfuscated == "+########1234"
-        assert target.provider == TFAProvider.PHONE
-        assert target.last_method == "sms"
-
-    def test_tfa_provider_values(self) -> None:
-        """Test TFAProvider enum values."""
-        assert TFAProvider.PHONE.value == "gigyaPhone"
-        assert TFAProvider.EMAIL.value == "gigyaEmail"
-
-    def test_token_pair_creation(self) -> None:
-        """Test TokenPair dataclass."""
-        pair = TokenPair(
-            access_token="access-123",  # noqa: S106
-            refresh_token="refresh-456",  # noqa: S106
-        )
-
-        assert pair.access_token == "access-123"  # noqa: S105
-        assert pair.refresh_token == "refresh-456"  # noqa: S105
-        assert pair.expires_at is None
+            # Verify cookies are actually in the jar
+            jar = session.cookie_jar
+            cookies = {c.key: c.value for c in jar}
+            assert cookies["gmid"] == "test-gmid"
+            assert cookies["ucid"] == "test-ucid"

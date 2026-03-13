@@ -6,7 +6,7 @@ import base64
 import io
 import json
 import logging
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -460,7 +460,28 @@ class DompowerClient:
                         minute,
                         tzinfo=DOMINION_TIMEZONE,
                     )
-                    return_dict[timestamp] = cell_value
+
+                    # Detect DST gap times (e.g., 2:00-2:59 AM on spring-forward).
+                    # ZoneInfo assigns the pre-transition (standard) offset to gap
+                    # times, creating a timestamp whose local time doesn't actually
+                    # exist. Detect by round-tripping through UTC: if converting
+                    # to UTC and back yields a different local time, it's a gap.
+                    round_trip = timestamp.astimezone(UTC).astimezone(DOMINION_TIMEZONE)
+                    if round_trip.hour != timestamp.hour:
+                        # Gap time — fold consumption into the real
+                        # post-transition time that this instant maps to.
+                        if round_trip in return_dict:
+                            return_dict[round_trip] += cell_value
+                        else:
+                            return_dict[round_trip] = cell_value
+                        continue
+
+                    # Accumulate — a prior gap-time fold may have
+                    # already stored a value under this key.
+                    if timestamp in return_dict:
+                        return_dict[timestamp] += cell_value
+                    else:
+                        return_dict[timestamp] = cell_value
             return return_dict
 
         consumption_dict = _parse_worksheet(consumption_sheet)
