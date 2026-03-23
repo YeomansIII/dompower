@@ -558,7 +558,35 @@ class TestHandleResponseErrors:
         self,
         aresponses: ResponsesMockServer,
     ) -> None:
-        """4xx responses raise ApiError with status code."""
+        """Non-auth 4xx responses raise ApiError with status code."""
+        aresponses.add(
+            "prodsvc-dominioncip.smartcmobile.com",
+            "/Service/api/1/test",
+            "GET",
+            response=aresponses.Response(status=404, body="Not Found"),
+        )
+
+        async with ClientSession() as session:
+            client = DompowerClient(
+                session,
+                access_token="tok",  # noqa: S106
+                refresh_token="ref",  # noqa: S106
+            )
+            client._token_manager._token_expires_at = datetime(2099, 1, 1, tzinfo=UTC)
+
+            with pytest.raises(ApiError) as exc_info:
+                await client._async_request("GET", "/Service/api/1/test")
+
+            assert exc_info.value.status_code == 404
+
+    async def test_401_403_raises_invalid_auth_error(
+        self,
+        aresponses: ResponsesMockServer,
+    ) -> None:
+        """401/403 responses after token refresh raise InvalidAuthError."""
+        # 401 triggers a token refresh attempt, which also fails,
+        # then the retry response (also 401) hits _handle_response
+        # which should raise InvalidAuthError
         aresponses.add(
             "prodsvc-dominioncip.smartcmobile.com",
             "/Service/api/1/test",
@@ -574,10 +602,8 @@ class TestHandleResponseErrors:
             )
             client._token_manager._token_expires_at = datetime(2099, 1, 1, tzinfo=UTC)
 
-            with pytest.raises(ApiError) as exc_info:
+            with pytest.raises(InvalidAuthError):
                 await client._async_request("GET", "/Service/api/1/test")
-
-            assert exc_info.value.status_code == 403
 
     async def test_api_level_error_in_body(
         self,

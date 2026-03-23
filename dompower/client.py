@@ -268,6 +268,12 @@ class DompowerClient:
                 retry_after=int(retry_after) if retry_after else None,
             )
 
+        if resp.status in (401, 403):
+            text = await resp.text()
+            raise InvalidAuthError(
+                f"Authentication failed: {resp.status}",
+            )
+
         if resp.status >= 400:
             text = await resp.text()
             raise ApiError(
