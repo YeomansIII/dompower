@@ -25,6 +25,11 @@ from . import (
     __version__,
 )
 
+# Log through dompower's own logger rather than the root logger, so that
+# -v/-vv can raise this CLI's verbosity without raising every third-party
+# library's verbosity with it. See async_main() for why that matters.
+_LOGGER = logging.getLogger(__name__)
+
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
@@ -331,7 +336,7 @@ async def cmd_usage(args: argparse.Namespace) -> int:
 
     def token_callback(access: str, refresh: str) -> None:
         save_tokens(args.token_file, access, refresh)
-        logging.info("Tokens updated and saved to %s", args.token_file)
+        _LOGGER.info("Tokens updated and saved to %s", args.token_file)
 
     async with aiohttp.ClientSession() as session:
         client = DompowerClient(
@@ -605,14 +610,14 @@ async def cmd_login(args: argparse.Namespace) -> int:
                     phone_targets = await auth.async_get_tfa_options(TFAProvider.PHONE)
                     all_targets.extend(phone_targets)
                 except Exception:
-                    logging.debug("Could not get phone TFA options")
+                    _LOGGER.debug("Could not get phone TFA options")
 
                 # Try to get email targets
                 try:
                     email_targets = await auth.async_get_tfa_options(TFAProvider.EMAIL)
                     all_targets.extend(email_targets)
                 except Exception:
-                    logging.debug("Could not get email TFA options")
+                    _LOGGER.debug("Could not get email TFA options")
 
                 if not all_targets:
                     print("Error: No TFA options available", file=sys.stderr)
@@ -699,7 +704,7 @@ async def cmd_accounts(args: argparse.Namespace) -> int:
 
     def token_callback(access: str, refresh: str) -> None:
         save_tokens(args.token_file, access, refresh)
-        logging.info("Tokens updated and saved to %s", args.token_file)
+        _LOGGER.info("Tokens updated and saved to %s", args.token_file)
 
     async with aiohttp.ClientSession() as session:
         client = DompowerClient(
@@ -790,7 +795,7 @@ async def cmd_select_account(args: argparse.Namespace) -> int:
 
     def token_callback(access: str, refresh: str) -> None:
         save_tokens(args.token_file, access, refresh)
-        logging.info("Tokens updated and saved to %s", args.token_file)
+        _LOGGER.info("Tokens updated and saved to %s", args.token_file)
 
     async with aiohttp.ClientSession() as session:
         client = DompowerClient(
@@ -903,7 +908,7 @@ async def cmd_bill_forecast(args: argparse.Namespace) -> int:
 
     def token_callback(access: str, refresh: str) -> None:
         save_tokens(args.token_file, access, refresh)
-        logging.info("Tokens updated and saved to %s", args.token_file)
+        _LOGGER.info("Tokens updated and saved to %s", args.token_file)
 
     async with aiohttp.ClientSession() as session:
         client = DompowerClient(
@@ -974,13 +979,27 @@ async def async_main() -> int:
     """Async main entry point."""
     args = parse_args()
 
-    # Setup logging
+    # Setup logging.
+    #
+    # Scope -v/-vv to dompower's own loggers instead of the root logger.
+    # basicConfig(level=DEBUG) would turn on DEBUG for every third-party
+    # library too, and that leaks credentials: the Gigya flow passes
+    # regToken, gigyaAssertion, phvToken and the user's TFA code as URL
+    # *query parameters*, so an HTTP library logging full request URLs at
+    # DEBUG would print them all in the clear.
+    #
+    # The root logger keeps the handler but stays at WARNING. Records from
+    # the dompower logger still reach that handler by propagation, so
+    # -v/-vv look unchanged for dompower's own output.
     if args.verbose >= 2:
-        logging.basicConfig(level=logging.DEBUG)
+        dompower_level = logging.DEBUG
     elif args.verbose == 1:
-        logging.basicConfig(level=logging.INFO)
+        dompower_level = logging.INFO
     else:
-        logging.basicConfig(level=logging.WARNING)
+        dompower_level = logging.WARNING
+
+    logging.basicConfig(level=logging.WARNING)
+    logging.getLogger("dompower").setLevel(dompower_level)
 
     # Commands that don't require token file
     no_token_commands = {"auth-info", "auth-helper", "login"}

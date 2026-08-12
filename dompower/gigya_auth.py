@@ -66,6 +66,30 @@ _LOGGER = logging.getLogger(__name__)
 TFACodeCallback = Callable[[TFATarget], Awaitable[str]]
 
 
+def _obfuscate_email(email: str) -> str:
+    """Obfuscate an email address so it is safe to log.
+
+    ``user@example.com`` becomes ``u***@e***.com``. This mirrors the
+    obfuscation Gigya itself applies to TFA targets, and keeps just enough
+    of the address to tell two accounts apart in a log.
+
+    Args:
+        email: The address to obfuscate.
+
+    Returns:
+        An obfuscated form, or ``***`` if the input is not address-shaped.
+    """
+    local, _, domain = email.partition("@")
+    if not local or not domain:
+        return "***"
+
+    domain_name, _, tld = domain.rpartition(".")
+    if not domain_name:
+        return f"{local[0]}***@***"
+
+    return f"{local[0]}***@{domain_name[0]}***.{tld}"
+
+
 class GigyaAuthenticator:
     """Handles Gigya/Dominion Energy authentication with TFA support.
 
@@ -227,7 +251,7 @@ class GigyaAuthenticator:
         if not self._session_initialized:
             await self.async_init_session()
 
-        _LOGGER.debug("Submitting credentials for %s", username)
+        _LOGGER.debug("Submitting credentials for %s", _obfuscate_email(username))
 
         # Step 2: Login with credentials
         data = {
@@ -322,7 +346,10 @@ class GigyaAuthenticator:
         response = await self._async_gigya_get(GIGYA_TFA_PROVIDERS, params)
         active_providers = response.get("activeProviders", [])
 
-        _LOGGER.debug("Active TFA providers: %s", active_providers)
+        _LOGGER.debug(
+            "Active TFA providers: %s",
+            [provider.get("name") for provider in active_providers],
+        )
 
         targets: list[TFATarget] = []
 
@@ -734,8 +761,16 @@ class GigyaAuthenticator:
         error_code = response.get("errorCode", 0)
         if error_code != 0:
             err_msg = response.get("errorMessage")
-            _LOGGER.error("finalizeTFA failed: %d - %s", error_code, err_msg)
-            _LOGGER.debug("finalizeTFA response: %s", response)
+            _LOGGER.error(
+                "finalizeTFA failed: %d - %s (callId: %s)",
+                error_code,
+                err_msg,
+                response.get("callId"),
+            )
+            # Never log the body: it carries regToken, id_token and
+            # sessionInfo.login_token. Field names alone are enough to
+            # tell what came back.
+            _LOGGER.debug("finalizeTFA response fields: %s", sorted(response))
 
         _LOGGER.debug("TFA finalized successfully")
 
@@ -763,8 +798,15 @@ class GigyaAuthenticator:
         error_code = response.get("errorCode", 0)
         if error_code != 0:
             err_msg = response.get("errorMessage")
-            _LOGGER.error("finalizeRegistration failed: %d - %s", error_code, err_msg)
-            _LOGGER.debug("finalizeRegistration response: %s", response)
+            _LOGGER.error(
+                "finalizeRegistration failed: %d - %s (callId: %s)",
+                error_code,
+                err_msg,
+                response.get("callId"),
+            )
+            # Never log the body: it carries regToken, id_token,
+            # sessionInfo.login_token, profile, emails and loginIDs.
+            _LOGGER.debug("finalizeRegistration response fields: %s", sorted(response))
 
         session_info = response.get("sessionInfo", {})
         self._gigya_session.login_token = session_info.get("login_token")
@@ -865,16 +907,19 @@ class GigyaAuthenticator:
                 url, headers=headers, json=payload
             ) as response:
                 if response.status != 200:
-                    text = await response.text()
+                    # The error body can echo credentials back, and this
+                    # message reaches the Home Assistant UI - status only.
                     _LOGGER.error(
-                        "Token exchange HTTP error: %d - %s", response.status, text
+                        "Token exchange HTTP error: status %d", response.status
                     )
-                    raise GigyaError(
-                        f"Token exchange failed: {response.status} - {text}"
-                    )
+                    raise GigyaError(f"Token exchange failed: HTTP {response.status}")
 
                 data = await response.json()
-                _LOGGER.debug("Token exchange response: %s", data)
+                # The body holds the live accessToken and refreshToken.
+                _LOGGER.debug(
+                    "Token exchange response fields: %s",
+                    sorted(data) if isinstance(data, dict) else type(data).__name__,
+                )
 
         except GigyaError:
             raise
@@ -883,7 +928,12 @@ class GigyaAuthenticator:
 
         status = data.get("status", {})
         if status.get("code") != 200:
-            _LOGGER.error("Token exchange API error: %s", data)
+            _LOGGER.error(
+                "Token exchange API error: status code %s, status type %s, message %s",
+                status.get("code"),
+                status.get("type"),
+                status.get("message"),
+            )
             raise GigyaError(
                 f"Token exchange failed: {status.get('message', 'Unknown error')}"
             )
@@ -893,7 +943,19 @@ class GigyaAuthenticator:
         refresh_token = token_data.get("refreshToken", "")
 
         if not access_token or not refresh_token:
-            _LOGGER.error("Token exchange missing tokens. Response: %s", data)
+            # Fires at ERROR, i.e. at everybody's default verbosity, and
+            # only one of the two tokens need be missing - so the body would
+            # print a live token into an ordinary log. Report presence only.
+            _LOGGER.error(
+                "Token exchange response missing tokens: status code %s, "
+                "status type %s, data fields %s, accessToken: %s, "
+                "refreshToken: %s",
+                status.get("code"),
+                status.get("type"),
+                sorted(token_data) if token_data else [],
+                "present" if access_token else "missing",
+                "present" if refresh_token else "missing",
+            )
             raise GigyaError(
                 f"Token exchange response missing tokens. "
                 f"Got keys: {list(token_data.keys()) if token_data else 'no data'}"
