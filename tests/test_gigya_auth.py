@@ -349,8 +349,10 @@ class TestGigyaBodyRedaction:
         for secret in (SENTINEL_REG_TOKEN, SENTINEL_ID_TOKEN, SENTINEL_LOGIN_TOKEN):
             assert secret not in caplog.text
 
-        # The failure must still be diagnosable.
-        assert "finalizeTFA failed" in caplog.text
+        # The failure must still be diagnosable. Assert on the step name and
+        # the error details rather than the exact phrasing - a non-zero code
+        # that still carries a session is legitimately worded differently.
+        assert "finalizeTFA" in caplog.text
         assert str(GIGYA_ERROR_INVALID_JWT) in caplog.text
         assert "Invalid parameter value" in caplog.text
         assert "test-call-id" in caplog.text
@@ -388,8 +390,10 @@ class TestGigyaBodyRedaction:
         ):
             assert secret not in caplog.text
 
-        # The failure must still be diagnosable.
-        assert "finalizeRegistration failed" in caplog.text
+        # The failure must still be diagnosable. Assert on the step name and
+        # the error details rather than the exact phrasing - a non-zero code
+        # that still carries a session is legitimately worded differently.
+        assert "finalizeRegistration" in caplog.text
         assert str(GIGYA_ERROR_INVALID_JWT) in caplog.text
         assert "Invalid parameter value" in caplog.text
         assert "test-call-id" in caplog.text
