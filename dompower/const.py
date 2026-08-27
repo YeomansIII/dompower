@@ -17,6 +17,23 @@ ENDPOINT_GET_BUSINESS_MASTER: Final[str] = (
     "/Service/api/1/BusinessMaster/GetBusinessMaster"
 )
 
+# User agent
+#
+# Dominion sits behind an Incapsula WAF, which fingerprints this header. Keep
+# the string byte-for-byte identical to one a real Chrome on macOS sends:
+#
+#   - The WebKit and Safari versions are frozen at 537.36 in every Chrome
+#     build. No real browser sends 537.00.
+#   - Chrome freezes the macOS version at 10_15_7 no matter the host OS.
+#   - Only the Chrome version changes. Raise it when it falls far behind
+#     stable, and change nothing else.
+#
+# Use this constant everywhere. A second, hand-written copy will drift.
+USER_AGENT: Final[str] = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+)
+
 # Default Headers
 DEFAULT_HEADERS: Final[dict[str, str]] = {
     "Content-Type": "application/json",
@@ -25,10 +42,7 @@ DEFAULT_HEADERS: Final[dict[str, str]] = {
     "pt": "1",
     "channel": "WEB",
     "Origin": "https://myaccount.dominionenergy.com",
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_0) "
-        "AppleWebKit/537.00 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.00"
-    ),
+    "User-Agent": USER_AGENT,
 }
 
 # Token expiration (in minutes)
