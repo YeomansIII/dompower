@@ -4,18 +4,20 @@ import io
 import json
 from datetime import UTC, date, datetime
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import openpyxl
 import pytest
-from aiohttp import ClientSession
+from aiohttp import ClientConnectorError, ClientSession
 from aresponses import ResponsesMockServer
 
 from dompower import (
     ApiError,
+    CannotConnectError,
     DompowerClient,
     InvalidAuthError,
     RateLimitError,
+    TokenExpiredError,
 )
 from dompower.client import DOMINION_TIMEZONE
 
@@ -515,6 +517,59 @@ class TestAsyncRequest401Retry:
             result = await client._async_request("GET", "/Service/api/1/test")
 
         assert result["data"]["result"] == "ok"
+
+    async def test_expired_refresh_token_propagates(
+        self,
+        aresponses: ResponsesMockServer,
+    ) -> None:
+        """An expired refresh token raises TokenExpiredError, not CannotConnectError.
+
+        Consumers rely on TokenExpiredError to tell "the user must re-authenticate"
+        apart from "the network is down". Home Assistant only starts a reauth flow
+        for the first case. See YeomansIII/dompower#5.
+        """
+        # First request → 401, which triggers a token refresh
+        aresponses.add(
+            "prodsvc-dominioncip.smartcmobile.com",
+            "/Service/api/1/test",
+            "GET",
+            response=aresponses.Response(status=401),
+        )
+        # Refresh also → 401, so the refresh token itself has expired
+        aresponses.add(
+            "prodsvc-dominioncip.smartcmobile.com",
+            "/UsermanagementAPI/api/1/login/auth/refresh",
+            "POST",
+            response=aresponses.Response(status=401),
+        )
+
+        async with ClientSession() as session:
+            client = DompowerClient(
+                session,
+                access_token="old_access",  # noqa: S106
+                refresh_token="expired_refresh",  # noqa: S106
+            )
+
+            with pytest.raises(TokenExpiredError):
+                await client._async_request("GET", "/Service/api/1/test")
+
+    async def test_connection_failure_still_raises_cannot_connect(self) -> None:
+        """Genuine transport errors are still reported as CannotConnectError."""
+        async with ClientSession() as session:
+            client = DompowerClient(
+                session,
+                access_token="tok",  # noqa: S106
+                refresh_token="ref",  # noqa: S106
+            )
+            client._token_manager._token_expires_at = datetime(2099, 1, 1, tzinfo=UTC)
+
+            with patch.object(
+                session,
+                "request",
+                side_effect=ClientConnectorError(MagicMock(), OSError("no route")),
+            ):
+                with pytest.raises(CannotConnectError):
+                    await client._async_request("GET", "/Service/api/1/test")
 
 
 # ---------------------------------------------------------------------------

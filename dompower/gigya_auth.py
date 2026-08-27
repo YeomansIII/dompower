@@ -40,6 +40,7 @@ from .const import (
     GIGYA_TFA_VERIFY_EMAIL,
     GIGYA_TFA_VERIFY_PHONE,
     LOGIN_URL,
+    USER_AGENT,
 )
 from .exceptions import (
     CannotConnectError,
@@ -599,9 +600,7 @@ class GigyaAuthenticator:
         headers = {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Referer": "https://myaccount.dominionenergy.com/",
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-            ),
+            "User-Agent": USER_AGENT,
         }
 
         try:

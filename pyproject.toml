@@ -1,6 +1,6 @@
 [project]
 name = "dompower"
-version = "0.2.2"
+version = "0.2.3"
 description = "Async Python client for Dominion Energy API"
 readme = "README.md"
 license = { text = "MIT" }
@@ -28,8 +28,12 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-aiohttp>=1.0.5",
     "aresponses>=3.0.0",
-    "mypy>=1.11.0",
-    "ruff>=0.6.0",
+    # ruff and mypy are pinned exactly, and must match .pre-commit-config.yaml.
+    # Both tools change their output between releases - ruff 0.16 began
+    # formatting Python code blocks inside Markdown - so an unpinned range lets
+    # a new release break CI on an unrelated commit. Bump these deliberately.
+    "mypy==2.3.1",
+    "ruff==0.16.4",
     "pre-commit>=4.0.0",
 ]
 

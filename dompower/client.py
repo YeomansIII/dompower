@@ -21,6 +21,7 @@ from .const import (
 )
 from .exceptions import (
     ApiError,
+    AuthenticationError,
     CannotConnectError,
     InvalidAuthError,
     RateLimitError,
@@ -192,6 +193,8 @@ class DompowerClient:
 
         Raises:
             InvalidAuthError: If not authenticated.
+            TokenExpiredError: If the refresh token expired and re-authentication
+                is required.
             ApiError: If the API returns an error.
             CannotConnectError: If unable to connect.
         """
@@ -232,7 +235,10 @@ class DompowerClient:
 
                 return await self._handle_response(response, expect_binary)
 
-        except (InvalidAuthError, ApiError, RateLimitError):
+        # Catch the AuthenticationError base class so every auth failure keeps its
+        # type. A token refresh inside this block can raise TokenExpiredError, and
+        # consumers need that to tell "re-authenticate" apart from "network down".
+        except (AuthenticationError, ApiError, RateLimitError):
             raise
         except Exception as err:
             raise CannotConnectError(f"Failed to connect to API: {err}") from err
