@@ -137,6 +137,7 @@ from datetime import date, timedelta
 import aiohttp
 from dompower import DompowerClient
 
+
 async def main():
     async with aiohttp.ClientSession() as session:
         client = DompowerClient(
@@ -155,6 +156,7 @@ async def main():
         for record in usage:
             print(f"{record.timestamp}: {record.consumption} {record.unit}")
 
+
 asyncio.run(main())
 ```
 
@@ -168,16 +170,16 @@ from dompower import DompowerClient
 
 TOKEN_FILE = Path("tokens.json")
 
+
 def load_tokens():
     with TOKEN_FILE.open() as f:
         return json.load(f)
 
+
 def save_tokens(access_token: str, refresh_token: str):
     with TOKEN_FILE.open("w") as f:
-        json.dump({
-            "access_token": access_token,
-            "refresh_token": refresh_token
-        }, f)
+        json.dump({"access_token": access_token, "refresh_token": refresh_token}, f)
+
 
 async def main():
     tokens = load_tokens()
@@ -199,6 +201,7 @@ async def main():
 import aiohttp
 from dompower import GigyaAuthenticator, TFAProvider
 
+
 async def login_with_tfa():
     async with aiohttp.ClientSession() as session:
         auth = GigyaAuthenticator(session)
@@ -208,8 +211,7 @@ async def login_with_tfa():
 
         # Submit credentials
         result = await auth.async_submit_credentials(
-            "your.email@example.com",
-            "your_password"
+            "your.email@example.com", "your_password"
         )
 
         if result.tfa_required:
@@ -235,6 +237,7 @@ async def login_with_tfa():
 ```python
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from dompower import DompowerClient
+
 
 async def async_setup_entry(hass, entry):
     session = async_get_clientsession(hass)
@@ -314,9 +317,9 @@ GigyaAuthenticator(
 @dataclass(frozen=True)
 class IntervalUsageData:
     timestamp: datetime  # Start of 30-minute interval
-    consumption: float   # kWh consumed
-    generation: float    # kWh excess generation returned to grid
-    unit: str            # "kWh"
+    consumption: float  # kWh consumed
+    generation: float  # kWh excess generation returned to grid
+    unit: str  # "kWh"
 ```
 
 ### Exceptions
