@@ -383,7 +383,6 @@ class GigyaAuthenticator:
             }
 
             response = await self._async_gigya_get(GIGYA_TFA_SEND_PHONE, params)
-            self._gigya_session.phv_token = response.get("phvToken")
 
         else:
             # Send email verification code
@@ -399,7 +398,14 @@ class GigyaAuthenticator:
                 "format": "json",
             }
 
-            await self._async_gigya_get(GIGYA_TFA_SEND_EMAIL, params)
+            response = await self._async_gigya_get(GIGYA_TFA_SEND_EMAIL, params)
+
+        # sendVerificationCode returns a refreshed gigyaAssertion and a phvToken.
+        # completeVerification must be called with both; using the initTFA
+        # assertion instead is rejected as an invalid JWT (errorCode 400006).
+        if response.get("gigyaAssertion"):
+            self._gigya_session.gigya_assertion = str(response["gigyaAssertion"])
+        self._gigya_session.phv_token = response.get("phvToken")
 
         _LOGGER.debug("TFA code sent successfully")
 
@@ -440,11 +446,10 @@ class GigyaAuthenticator:
 
             response = await self._async_gigya_get(GIGYA_TFA_VERIFY_PHONE, params)
         else:
-            # Email verification - requires emailID
-            email_id = target.id if target else ""
+            # Email verification - requires the phvToken from sendVerificationCode
             params = {
                 "gigyaAssertion": self._gigya_session.gigya_assertion,
-                "emailID": email_id,
+                "phvToken": self._gigya_session.phv_token,
                 "code": code,
                 "regToken": self._gigya_session.reg_token,
                 "APIKey": GIGYA_API_KEY,

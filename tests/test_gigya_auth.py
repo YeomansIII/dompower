@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,7 +17,13 @@ from dompower import (
 from dompower.const import (
     GIGYA_ERROR_INVALID_PASSWORD,
     GIGYA_ERROR_TFA_PENDING,
+    GIGYA_TFA_INIT,
+    GIGYA_TFA_SEND_EMAIL,
+    GIGYA_TFA_SEND_PHONE,
+    GIGYA_TFA_VERIFY_EMAIL,
+    GIGYA_TFA_VERIFY_PHONE,
 )
+from dompower.models import TFAProvider, TFATarget, TokenPair
 
 
 @pytest.fixture
@@ -171,3 +178,105 @@ class TestCookiePersistence:
             cookies = {c.key: c.value for c in jar}
             assert cookies["gmid"] == "test-gmid"
             assert cookies["ucid"] == "test-ucid"
+
+
+# ---------------------------------------------------------------------------
+# TFA send/verify — assertion and phvToken handling
+# ---------------------------------------------------------------------------
+
+
+def _tfa_target(provider: TFAProvider) -> TFATarget:
+    return TFATarget(id="target-id", obfuscated="***", provider=provider)
+
+
+def _auth_with_tfa_state(mock_session: MagicMock) -> GigyaAuthenticator:
+    auth = GigyaAuthenticator(mock_session)
+    auth._gigya_session.reg_token = "test-reg-token"  # noqa: S105
+    return auth
+
+
+def _gigya_responses(endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Simulate Gigya: initTFA and sendVerificationCode each mint an assertion."""
+    if endpoint == GIGYA_TFA_INIT:
+        return {"errorCode": 0, "gigyaAssertion": "assertion-from-init"}
+    if endpoint in (GIGYA_TFA_SEND_PHONE, GIGYA_TFA_SEND_EMAIL):
+        return {
+            "errorCode": 0,
+            "gigyaAssertion": "assertion-from-send",
+            "phvToken": "phv-token-from-send",
+        }
+    if endpoint in (GIGYA_TFA_VERIFY_PHONE, GIGYA_TFA_VERIFY_EMAIL):
+        return {"errorCode": 0, "providerAssertion": "provider-assertion"}
+    raise AssertionError(f"unexpected endpoint {endpoint}")
+
+
+class TestTFASendAndVerifyParams:
+    """sendVerificationCode returns a refreshed gigyaAssertion plus a phvToken;
+    completeVerification must be called with those, for both SMS and email.
+    """
+
+    @pytest.mark.parametrize("provider", [TFAProvider.PHONE, TFAProvider.EMAIL])
+    async def test_send_stores_refreshed_assertion_and_phv_token(
+        self, mock_session: MagicMock, provider: TFAProvider
+    ) -> None:
+        auth = _auth_with_tfa_state(mock_session)
+
+        with patch.object(auth, "_async_gigya_get", side_effect=_gigya_responses):
+            await auth.async_send_tfa_code(_tfa_target(provider))
+
+        assert auth._gigya_session.gigya_assertion == "assertion-from-send"
+        assert auth._gigya_session.phv_token == "phv-token-from-send"  # noqa: S105
+
+    async def test_send_keeps_init_assertion_when_send_returns_none(
+        self, mock_session: MagicMock
+    ) -> None:
+        auth = _auth_with_tfa_state(mock_session)
+
+        def responses(endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
+            if endpoint == GIGYA_TFA_INIT:
+                return {"errorCode": 0, "gigyaAssertion": "assertion-from-init"}
+            return {"errorCode": 0, "phvToken": "phv-token-from-send"}
+
+        with patch.object(auth, "_async_gigya_get", side_effect=responses):
+            await auth.async_send_tfa_code(_tfa_target(TFAProvider.EMAIL))
+
+        assert auth._gigya_session.gigya_assertion == "assertion-from-init"
+
+    @pytest.mark.parametrize(
+        ("provider", "verify_endpoint"),
+        [
+            (TFAProvider.PHONE, GIGYA_TFA_VERIFY_PHONE),
+            (TFAProvider.EMAIL, GIGYA_TFA_VERIFY_EMAIL),
+        ],
+    )
+    async def test_verify_uses_send_assertion_and_phv_token(
+        self, mock_session: MagicMock, provider: TFAProvider, verify_endpoint: str
+    ) -> None:
+        auth = _auth_with_tfa_state(mock_session)
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        async def recording(endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
+            calls.append((endpoint, params))
+            return _gigya_responses(endpoint, params)
+
+        with (
+            patch.object(auth, "_async_gigya_get", side_effect=recording),
+            patch.object(auth, "_async_finalize_tfa", new_callable=AsyncMock),
+            patch.object(auth, "_async_finalize_registration", new_callable=AsyncMock),
+            patch.object(
+                auth, "_async_complete_login", new_callable=AsyncMock
+            ) as complete,
+        ):
+            complete.return_value = TokenPair(
+                access_token="access",  # noqa: S106
+                refresh_token="refresh",  # noqa: S106
+            )
+            await auth.async_send_tfa_code(_tfa_target(provider))
+            await auth.async_verify_tfa_code("123456")
+
+        verify_calls = [p for e, p in calls if e == verify_endpoint]
+        assert len(verify_calls) == 1
+        params = verify_calls[0]
+        assert params["gigyaAssertion"] == "assertion-from-send"
+        assert params["phvToken"] == "phv-token-from-send"
+        assert params["code"] == "123456"
