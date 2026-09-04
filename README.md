@@ -52,6 +52,30 @@ Create a `tokens.json` file:
 
 The library automatically refreshes tokens when they expire (every 30 minutes). Both tokens rotate on each refresh - the library handles this automatically and notifies via callback.
 
+### Cloudflare "Access Denied" (HTML 403) on every request
+
+Dominion's API host is behind Cloudflare bot protection. From some networks every
+request made with Python's default TLS stack is answered with an HTML
+`!! Error !! Access Denied` page (HTTP 403), even unauthenticated ones, so both
+`login` and token refresh fail. Requests sent with a browser TLS fingerprint get
+through. Install the optional `curl_cffi` backend and enable it:
+
+```bash
+pip install "dompower[browser]"
+dompower --browser-tls --token-file tokens.json accounts
+# or: export DOMPOWER_BROWSER_TLS=1
+```
+
+Library users can pass `dompower.BrowserSession()` anywhere an
+`aiohttp.ClientSession` is expected:
+
+```python
+from dompower import BrowserSession, DompowerClient
+
+async with BrowserSession() as session:
+    client = DompowerClient(session, access_token=..., refresh_token=...)
+```
+
 ## CLI Usage
 
 ### Get Usage Data

@@ -6,9 +6,11 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 import aiohttp
 
@@ -64,6 +66,18 @@ Examples:
         action="count",
         default=0,
         help="Increase verbosity (use -vv for debug)",
+    )
+
+    parser.add_argument(
+        "--browser-tls",
+        action="store_true",
+        default=os.environ.get("DOMPOWER_BROWSER_TLS", "") not in ("", "0", "false"),
+        help=(
+            "Send requests with a browser TLS fingerprint via curl_cffi "
+            "(requires 'pip install dompower[browser]'). Use this if Dominion's "
+            "API answers every request with an HTML 'Access Denied' 403. "
+            "Also enabled by DOMPOWER_BROWSER_TLS=1."
+        ),
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -215,6 +229,18 @@ Examples:
     return parser.parse_args()
 
 
+def create_session(args: argparse.Namespace) -> Any:
+    """Build the HTTP session for a command (aiohttp, or curl_cffi with
+    --browser-tls). Returned as Any: BrowserSession mirrors the ClientSession
+    surface dompower uses but is not a subclass.
+    """
+    if getattr(args, "browser_tls", False):
+        from .browser_session import BrowserSession
+
+        return BrowserSession()
+    return aiohttp.ClientSession()
+
+
 def load_tokens(token_file: Path) -> dict[str, str | None]:
     """Load tokens from JSON file."""
     if not token_file.exists():
@@ -333,7 +359,7 @@ async def cmd_usage(args: argparse.Namespace) -> int:
         save_tokens(args.token_file, access, refresh)
         logging.info("Tokens updated and saved to %s", args.token_file)
 
-    async with aiohttp.ClientSession() as session:
+    async with create_session(args) as session:
         client = DompowerClient(
             session,
             access_token=tokens["access_token"],
@@ -402,7 +428,7 @@ async def cmd_refresh(args: argparse.Namespace) -> int:
     def token_callback(access: str, refresh: str) -> None:
         save_tokens(args.token_file, access, refresh)
 
-    async with aiohttp.ClientSession() as session:
+    async with create_session(args) as session:
         client = DompowerClient(
             session,
             access_token=tokens["access_token"],
@@ -516,7 +542,7 @@ async def cmd_auth_helper(args: argparse.Namespace) -> int:
     print("Validating tokens...")
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with create_session(args) as session:
             client = DompowerClient(
                 session,
                 access_token=access_token,
@@ -581,7 +607,7 @@ async def cmd_login(args: argparse.Namespace) -> int:
     print("Logging in...")
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with create_session(args) as session:
             auth = GigyaAuthenticator(session, cookie_file=cookie_file)
 
             # Load existing cookies (may bypass TFA)
@@ -701,7 +727,7 @@ async def cmd_accounts(args: argparse.Namespace) -> int:
         save_tokens(args.token_file, access, refresh)
         logging.info("Tokens updated and saved to %s", args.token_file)
 
-    async with aiohttp.ClientSession() as session:
+    async with create_session(args) as session:
         client = DompowerClient(
             session,
             access_token=tokens["access_token"],
@@ -792,7 +818,7 @@ async def cmd_select_account(args: argparse.Namespace) -> int:
         save_tokens(args.token_file, access, refresh)
         logging.info("Tokens updated and saved to %s", args.token_file)
 
-    async with aiohttp.ClientSession() as session:
+    async with create_session(args) as session:
         client = DompowerClient(
             session,
             access_token=tokens["access_token"],
@@ -905,7 +931,7 @@ async def cmd_bill_forecast(args: argparse.Namespace) -> int:
         save_tokens(args.token_file, access, refresh)
         logging.info("Tokens updated and saved to %s", args.token_file)
 
-    async with aiohttp.ClientSession() as session:
+    async with create_session(args) as session:
         client = DompowerClient(
             session,
             access_token=tokens["access_token"],
