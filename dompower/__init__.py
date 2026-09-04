@@ -23,6 +23,7 @@ Example:
 """
 
 from .auth import TokenManager, TokenUpdateCallback
+from .browser_session import BrowserSession
 from .client import DompowerClient
 from .const import LOGIN_URL
 from .exceptions import (
@@ -74,6 +75,7 @@ __all__ = [
     "BillPeriodData",
     "BillingData",
     "BrowserAuthRequiredError",
+    "BrowserSession",
     "CannotConnectError",
     "CustomerInfo",
     "DompowerClient",
