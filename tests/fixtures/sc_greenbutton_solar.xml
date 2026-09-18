@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic Bidgely Green Button export for a net-metered SC account.
+     The structure follows real gb-download output:
+     - The UsagePoint ID is a path segment in the link hrefs.
+     - Each UsagePoint has one "Interval Consumption" entry for each day.
+     - GRID is grid delivery. SOLAR is solar export (negative values).
+     - Non-interval entries (Time Configuration, ReadingType) are skipped.
+     Epochs are local wall time encoded as UTC:
+     1786579200 = 2026-08-13 00:00 America/New_York. Intervals are 900 s. -->
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:espi="http://naesb.org/espi">
+  <entry>
+    <link href="https://naapi2.bidgely.com/LocalTimeParameters/LTP1" rel="self"/>
+    <title>Time Configuration</title>
+    <content>
+      <espi:LocalTimeParameters>
+        <espi:dstOffset>3600</espi:dstOffset>
+      </espi:LocalTimeParameters>
+    </content>
+  </entry>
+  <entry>
+    <link href="https://naapi2.bidgely.com/Customer/C1/UsagePoint/UP_GRID/MeterReading/MR1/IntervalBlock/IB0" rel="self"/>
+    <link href="https://naapi2.bidgely.com/Customer/C1/UsagePoint/UP_GRID/MeterReading/MR1/IntervalBlock" rel="up"/>
+    <title>Interval Consumption. Start: 2026-08-12 00:00:00</title>
+    <content>
+      <espi:IntervalBlock>
+        <espi:IntervalReading>
+          <espi:timePeriod><espi:duration>900</espi:duration><espi:start>1786578300</espi:start></espi:timePeriod>
+          <espi:value>100</espi:value>
+        </espi:IntervalReading>
+      </espi:IntervalBlock>
+    </content>
+  </entry>
+  <entry>
+    <link href="https://naapi2.bidgely.com/Customer/C1/UsagePoint/UP_GRID/MeterReading/MR1/IntervalBlock/IB1" rel="self"/>
+    <link href="https://naapi2.bidgely.com/Customer/C1/UsagePoint/UP_GRID/MeterReading/MR1/IntervalBlock" rel="up"/>
+    <title>Interval Consumption. Start: 2026-08-13 00:00:00</title>
+    <content>
+      <espi:IntervalBlock>
+        <espi:IntervalReading>
+          <espi:timePeriod><espi:duration>900</espi:duration><espi:start>1786579200</espi:start></espi:timePeriod>
+          <espi:value>209</espi:value>
+        </espi:IntervalReading>
+        <espi:IntervalReading>
+          <espi:timePeriod><espi:duration>900</espi:duration><espi:start>1786580100</espi:start></espi:timePeriod>
+          <espi:value>328</espi:value>
+        </espi:IntervalReading>
+      </espi:IntervalBlock>
+    </content>
+  </entry>
+  <entry>
+    <link href="https://naapi2.bidgely.com/Customer/C1/UsagePoint/UP_GRID/MeterReading/MR1/ReadingType/RT1" rel="self"/>
+    <title>ReadingType</title>
+    <content>
+      <espi:ReadingType>
+        <espi:flowDirection>1</espi:flowDirection>
+        <espi:intervalLength>900</espi:intervalLength>
+      </espi:ReadingType>
+    </content>
+  </entry>
+  <entry>
+    <link href="https://naapi2.bidgely.com/Customer/C1/UsagePoint/UP_SOLAR/MeterReading/MR2/IntervalBlock/IB2" rel="self"/>
+    <title>Interval Consumption. Start: 2026-08-13 00:00:00</title>
+    <content>
+      <espi:IntervalBlock>
+        <espi:IntervalReading>
+          <espi:timePeriod><espi:duration>900</espi:duration><espi:start>1786579200</espi:start></espi:timePeriod>
+          <espi:value>0</espi:value>
+        </espi:IntervalReading>
+        <espi:IntervalReading>
+          <espi:timePeriod><espi:duration>900</espi:duration><espi:start>1786580100</espi:start></espi:timePeriod>
+          <espi:value>-128</espi:value>
+        </espi:IntervalReading>
+      </espi:IntervalBlock>
+    </content>
+  </entry>
+  <entry>
+    <link href="https://naapi2.bidgely.com/Customer/C1/UsagePoint/UP_GRID/MeterReading/MR1/IntervalBlock/IB3" rel="self"/>
+    <title>Interval Consumption. Start: 2026-08-14 00:00:00</title>
+    <content>
+      <espi:IntervalBlock>
+        <espi:IntervalReading>
+          <espi:timePeriod><espi:duration>900</espi:duration><espi:start>1786665600</espi:start></espi:timePeriod>
+          <espi:value>412</espi:value>
+        </espi:IntervalReading>
+      </espi:IntervalBlock>
+    </content>
+  </entry>
+</feed>
