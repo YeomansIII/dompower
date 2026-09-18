@@ -31,8 +31,10 @@ from ..models import MeterType, TFAProvider
 from .auth import SCAuthenticator, create_sc_cookie_jar
 from .client import DominionSCClient, registers_to_intervals
 from .models import SCRegisterUsage
+from .report import ISSUE_URL, async_build_report
 
 DEFAULT_STATE_FILE = Path.home() / ".dompower" / "sc.json"
+DEFAULT_REPORT_FILE = "dompower-sc-report.txt"
 PASSWORD_ENV = "DOMPOWER_SC_PASSWORD"  # noqa: S105 - variable name, not a secret
 
 
@@ -72,6 +74,30 @@ def add_sc_parsers(subparsers: Any) -> None:
         "--gas", action="store_true", help="Show gas data instead of electric"
     )
     usage_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+    report_parser = subparsers.add_parser(
+        "sc-report",
+        help="South Carolina: write a redacted diagnostic report for a GitHub issue",
+    )
+    report_parser.add_argument(
+        "-u", "--username", help="SC portal username (default: from state file)"
+    )
+    report_parser.add_argument(
+        "--state-file",
+        type=Path,
+        default=DEFAULT_STATE_FILE,
+        help=f"File from sc-login (default: {DEFAULT_STATE_FILE})",
+    )
+    report_parser.add_argument(
+        "--days", type=int, default=3, help="Number of past days (default: 3)"
+    )
+    report_parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=Path(DEFAULT_REPORT_FILE),
+        help=f"Report file (default: {DEFAULT_REPORT_FILE})",
+    )
 
 
 def _load_state(path: Path) -> dict[str, str]:
@@ -256,4 +282,28 @@ async def cmd_sc_usage(args: argparse.Namespace) -> int:
         )
     print()
     print(f"Bill forecast: {json.dumps(output['bill_forecast'], indent=2)}")
+    return 0
+
+
+async def cmd_sc_report(args: argparse.Namespace) -> int:
+    """Write a redacted diagnostic report that users can attach to an issue."""
+    state = _load_state(args.state_file)
+    username = args.username or state.get("username") or await _prompt("Username: ")
+    password = _password()
+    if not username or not password:
+        print("Error: Username and password are required", file=sys.stderr)
+        return 1
+    tfa_token = state.get("tfa_token") if state.get("username") == username else None
+
+    print("Collecting data. This can take a minute...")
+    async with aiohttp.ClientSession(cookie_jar=create_sc_cookie_jar()) as session:
+        report = await async_build_report(
+            session, username, password, tfa_token, days=args.days
+        )
+
+    args.output.write_text(report, encoding="utf-8")
+    print()
+    print(f"Report written to: {args.output.resolve()}")
+    print("Open the file and read it before you share it. It is plain text.")
+    print(f"Then attach it to {ISSUE_URL}")
     return 0

@@ -25,6 +25,7 @@ from dompower import (
 from dompower.sc import parse_bill_forecast, parse_registers, registers_to_intervals
 from dompower.sc.auth import find_verification_token
 from dompower.sc.const import SC_TIMEZONE
+from dompower.sc.report import async_build_report, json_shape, redact
 
 PORTAL = "account.dominionenergysc.com"
 BIDGELY = "desc-prodapi.bidgely.com"
@@ -469,3 +470,153 @@ class TestDominionSCClient:
 
         assert forecast.forecasted_cost == 31
         assert forecast.last_year_cost is None
+
+
+ALERTS = {
+    "data": {
+        "amiUsageAlert": {
+            "currentBillUsageStartDate": "2026-08-01T00:00:00",
+            "currentBillUsageEndDate": "2026-08-31T00:00:00",
+            "currentBillThroughDate": "2026-08-14T00:00:00",
+            "totalCostUnbilledConsumption": 42.5,
+            "currentCostPerDay": 3,
+            "numberOfDaysInCurrentBill": 31,
+            "lastYearAmountExists": False,
+        }
+    }
+}
+SECRETS = {
+    "username": "Tester@Example.com",
+    "password": "hunter2-secret",
+    "tfa_token": "tfa-token-abc",
+}
+
+
+class TestSCReport:
+    """Tests for the redacted diagnostic report."""
+
+    async def test_full_report_has_no_secrets(
+        self, aresponses: ResponsesMockServer
+    ) -> None:
+        """A complete report has the useful data and none of the secrets."""
+        _add_full_login(aresponses, "bearer-secret-1")
+        path = "/v2.0/dashboard/users/user-123/gb-download"
+        for _ in range(2):  # electric and gas
+            aresponses.add(
+                BIDGELY, path, "GET", aresponses.Response(body=FIXTURE.read_text())
+            )
+        aresponses.add(PORTAL, "/", "GET", aresponses.Response(body=HOME_HTML))
+        aresponses.add(
+            PORTAL,
+            "/fusionapi/CommonWebApi/GetAccountAMIUsageAlerts/",
+            "GET",
+            _json(aresponses, ALERTS),
+        )
+
+        async with ClientSession() as session:
+            report = await async_build_report(
+                session,
+                SECRETS["username"],
+                SECRETS["password"],
+                SECRETS["tfa_token"],
+                today=date(2026, 8, 15),
+            )
+
+        lowered = report.lower()
+        for secret in [
+            *SECRETS.values(),
+            "user-123",
+            "1 MAIN ST",
+            "bearer-secret-1",
+            "login-token",
+            "home-token",
+            "encrypted",
+            "UP_GRID",
+            "UP_SOLAR",
+        ]:
+            assert secret.lower() not in lowered, secret
+        assert "Saved TFA token accepted: yes" in report
+        assert "Meter types: electric, gas" in report
+        assert '"status": "twoFA"' in report
+        assert "token=<redacted>" in report
+        assert "/users/<user-id>/gb-download" in report
+        assert "verification token found" in report
+        assert "register-1:" in report
+        assert "register-2:" in report
+        assert "dstOffset: 3600" in report
+        assert "flowDirection: 1" in report
+        assert "wall-time reading:" in report
+        assert "2026-08-13: consumption 0.537, generation 0.128" in report
+        assert "cost to date: $42.50" in report
+        assert report.rstrip().endswith("(none)")
+
+    async def test_report_keeps_login_errors(
+        self, aresponses: ResponsesMockServer
+    ) -> None:
+        """A failed login still gives a report with the error and responses."""
+        _add_login_start(aresponses, status="mystery")
+
+        async with ClientSession() as session:
+            report = await async_build_report(
+                session, "user@example.com", "password1", None, today=date(2026, 8, 15)
+            )
+
+        assert "Login complete: no" in report
+        assert "InvalidAuthError: Unexpected SC login status: 'mystery'" in report
+        assert '"status": "mystery"' in report
+        assert "password1" not in report
+
+    async def test_report_rejected_tfa_token(
+        self, aresponses: ResponsesMockServer
+    ) -> None:
+        """A rejected TFA token tells the user to run sc-login."""
+        _add_login_start(aresponses)
+        aresponses.add(
+            PORTAL,
+            "/fusionapi/LoginWebApi/Verify2FAToken/",
+            "GET",
+            _json(aresponses, {"data": False}),
+        )
+
+        async with ClientSession() as session:
+            report = await async_build_report(
+                session, "user@example.com", "password1", "old-token"
+            )
+
+        assert "Saved TFA token accepted: no (run 'dompower sc-login')" in report
+        assert "old-token" not in report
+
+    def test_redact(self) -> None:
+        """Secrets, email addresses, and phone numbers are replaced."""
+        text = (
+            "User MySecret logged in as a.b+c@mail.example.org, phone (803) 555-1234 "
+            "or 803-555-1234. Epoch 1786579200 on 2026-08-13 12:00, value 209."
+        )
+        result = redact(text, ["mysecret", None, "abc"])
+        assert result == (
+            "User <redacted> logged in as <email>, phone <phone> "
+            "or <phone>. Epoch 1786579200 on 2026-08-13 12:00, value 209."
+        )
+
+    def test_json_shape(self) -> None:
+        """Only field names, booleans, dates, and allowlisted keys are shown."""
+        shape = json_shape(
+            {
+                "status": "twoFA",
+                "name": "Jane",
+                "amount": 12.5,
+                "ok": True,
+                "date": "2026-08-01T00:00:00",
+                "1234567": {"phoneNumbers": ["803-555-1234"]},
+                "items": list(range(7)),
+            }
+        )
+        assert shape == {
+            "status": "twoFA",
+            "name": "<string, 4 chars>",
+            "amount": "<number>",
+            "ok": True,
+            "date": "2026-08-01T00:00:00",
+            "<key 6>": {"phoneNumbers": ["<string, 12 chars>"]},
+            "items": ["<number>"] * 5 + ["<2 more items>"],
+        }

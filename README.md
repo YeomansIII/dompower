@@ -354,7 +354,29 @@ dompower sc-login -u you@example.com
 # Set DOMPOWER_SC_PASSWORD to skip the password prompt.
 dompower sc-usage --days 3
 dompower sc-usage --days 3 --gas --json
+
+# Write a redacted diagnostic report to dompower-sc-report.txt.
+dompower sc-report
 ```
+
+### Diagnostic report
+
+`dompower sc-report` logs in with the saved TFA token and writes a plain
+text file. You can attach it to a GitHub issue. Read the file before you
+post it.
+
+The report does not contain your username, password, TFA token, cookies,
+email address, phone number, service address, account number, or Bidgely
+user ID. It shows:
+
+- Each request (path and HTTP status) and the JSON field names of each
+  response. Most values show only as `<string, N chars>` or `<number>`.
+- The meter registers, readings per day, and daily and hourly totals.
+- The structure of the Green Button XML and some raw readings.
+- The bill forecast amounts.
+
+If a step fails, the report still includes the error and the responses up
+to that step.
 
 ### Library
 

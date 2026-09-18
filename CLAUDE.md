@@ -42,7 +42,8 @@ uv run ruff format dompower
   - `sc/auth.py` - `SCAuthenticator`: portal login, TFA (`InitAuthentication`, `SendPINCode`, `VerifyPIN`), saved TFA token (`Verify2FAToken`), Bidgely bearer token. Step method names match `GigyaAuthenticator`.
   - `sc/client.py` - `DominionSCClient`: interval usage and bill forecast. Logs in again once on 401/403.
   - `sc/greenbutton.py` - Pure Green Button XML parser. One `SCRegisterUsage` per UsagePoint.
-  - `sc/cli.py` - `sc-login` and `sc-usage` CLI commands.
+  - `sc/cli.py` - `sc-login`, `sc-usage`, and `sc-report` CLI commands.
+  - `sc/report.py` - Redacted diagnostic report for SC testers. `_http.RESPONSE_RECORDER` (a `ContextVar`, `None` by default) records the responses while the report runs. The report shows values only from allowlists, then replaces known secrets, email addresses, and phone numbers. If you add a field to the report, keep it on an allowlist.
 
 ### SC Notes
 

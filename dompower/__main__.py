@@ -24,7 +24,7 @@ from . import (
     TokenExpiredError,
     __version__,
 )
-from .sc.cli import add_sc_parsers, cmd_sc_login, cmd_sc_usage
+from .sc.cli import add_sc_parsers, cmd_sc_login, cmd_sc_report, cmd_sc_usage
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +47,9 @@ Examples:
   # South Carolina: log in once, then show usage
   dompower sc-login -u you@example.com
   dompower sc-usage --days 3
+
+  # South Carolina: write a redacted report for a GitHub issue
+  dompower sc-report
 """,
     )
 
@@ -991,7 +994,14 @@ async def async_main() -> int:
         logging.basicConfig(level=logging.WARNING)
 
     # Commands that don't require token file
-    no_token_commands = {"auth-info", "auth-helper", "login", "sc-login", "sc-usage"}
+    no_token_commands = {
+        "auth-info",
+        "auth-helper",
+        "login",
+        "sc-login",
+        "sc-usage",
+        "sc-report",
+    }
 
     # Validate token-file is provided for commands that need it
     if args.command not in no_token_commands and not args.token_file:
@@ -1022,6 +1032,8 @@ async def async_main() -> int:
             return await cmd_sc_login(args)
         elif args.command == "sc-usage":
             return await cmd_sc_usage(args)
+        elif args.command == "sc-report":
+            return await cmd_sc_report(args)
         else:
             print(f"Unknown command: {args.command}", file=sys.stderr)
             return 1

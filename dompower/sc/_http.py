@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -22,6 +24,12 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 _TIMEOUT = aiohttp.ClientTimeout(total=60)
+
+# Called with (method, url, status, body) after each response. The sc-report
+# command sets this to record the responses. It is None in normal use.
+RESPONSE_RECORDER: ContextVar[Callable[[str, str, int, str], None] | None] = ContextVar(
+    "sc_response_recorder", default=None
+)
 
 
 def cache_buster() -> str:
@@ -105,6 +113,10 @@ async def async_request_text(
             status = resp.status
     except (aiohttp.ClientError, TimeoutError) as err:
         raise CannotConnectError(f"Failed to connect to {url}: {err}") from err
+
+    recorder = RESPONSE_RECORDER.get()
+    if recorder is not None:
+        recorder(method, str(resp.url), status, text)
 
     if status in (401, 403):
         raise InvalidAuthError(f"Authentication failed: {status} for {url}")
