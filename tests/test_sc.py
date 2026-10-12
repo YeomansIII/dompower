@@ -2,6 +2,10 @@
 # ruff: noqa: S105, S106, S107 - test tokens are not secrets
 
 import json
+import os
+import stat
+import sys
+from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -25,6 +29,7 @@ from dompower import (
 )
 from dompower.sc import parse_bill_forecast, parse_registers, registers_to_intervals
 from dompower.sc.auth import find_verification_token
+from dompower.sc.cli import _save_state
 from dompower.sc.const import SC_TIMEZONE
 from dompower.sc.report import (
     _ReportState,
@@ -895,3 +900,63 @@ class TestSCReport:
             "<key 6>": {"phoneNumbers": ["<string, 12 chars>"]},
             "items": ["<number>"] * 5 + ["<2 more items>"],
         }
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes only")
+class TestSCStateFile:
+    """Tests for the file that stores the TFA token."""
+
+    @pytest.fixture(autouse=True)
+    def _open_umask(self) -> Iterator[None]:
+        """Use umask 0, so a default file mode would be readable by all."""
+        old = os.umask(0)
+        yield
+        os.umask(old)
+
+    def test_new_file_is_owner_only(self, tmp_path: Path) -> None:
+        """A new state file is 0600 and a new directory is 0700."""
+        path = tmp_path / "new-dir" / "sc.json"
+        opened: list[int] = []
+        real_open = os.open
+
+        def spy_open(file: Any, flags: int, mode: int = 0o777) -> int:
+            opened.append(mode)
+            return real_open(file, flags, mode)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(os, "open", spy_open)
+            _save_state(path, "user", "tfa-token")
+
+        assert opened == [0o600]
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+        assert json.loads(path.read_text()) == {
+            "username": "user",
+            "tfa_token": "tfa-token",
+        }
+
+    def test_existing_file_is_made_owner_only(self, tmp_path: Path) -> None:
+        """An existing state file becomes 0600 before the token is written."""
+        path = tmp_path / "sc.json"
+        path.write_text('{"username": "old", "tfa_token": "old-token-with-more"}')
+        path.chmod(0o644)
+        modes: list[int] = []
+        real_fdopen = os.fdopen
+
+        def spy_fdopen(fd: int, *args: Any, **kwargs: Any) -> Any:
+            modes.append(stat.S_IMODE(os.fstat(fd).st_mode))
+            return real_fdopen(fd, *args, **kwargs)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(os, "fdopen", spy_fdopen)
+            _save_state(path, "user", "tfa-token")
+
+        assert modes == [0o600]
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        assert json.loads(path.read_text())["tfa_token"] == "tfa-token"
+
+    def test_existing_directory_mode_is_kept(self, tmp_path: Path) -> None:
+        """The mode of a directory that exists does not change."""
+        tmp_path.chmod(0o755)
+        _save_state(tmp_path / "sc.json", "user", "tfa-token")
+        assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o755

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import sys
@@ -111,10 +112,14 @@ def _load_state(path: Path) -> dict[str, str]:
 
 def _save_state(path: Path, username: str, tfa_token: str) -> None:
     """Save the username and TFA token. The file is readable by the owner only."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as f:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # O_CREAT sets the mode only for a new file. Change an existing file to
+    # 0600 before the token goes into it.
+    with contextlib.suppress(FileNotFoundError):
+        path.chmod(0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump({"username": username, "tfa_token": tfa_token}, f, indent=2)
-    path.chmod(0o600)
 
 
 def _password() -> str:
