@@ -470,19 +470,29 @@ class SCAuthenticator:
         )
 
     async def _async_verify_saved_token(self, tfa_token: str) -> bool:
-        """Return True if the portal accepts a saved TFA token."""
+        """Return True if the portal accepts a saved TFA token.
+
+        Only ``"data": true`` accepts the token. Any other answer, a 4xx
+        response, or a body that is not as expected means TFA is needed.
+        Server errors (5xx) and connection errors still raise, because a new
+        TFA code does not help when the portal is down.
+        """
         url = f"{SC_PORTAL_URL}{SC_VERIFY_2FA_TOKEN}"
-        payload = decode_json(
-            await async_request_text(
-                self._session,
-                "GET",
+        try:
+            payload = decode_json(
+                await async_request_text(
+                    self._session,
+                    "GET",
+                    url,
+                    headers=self._login_ajax_headers(),
+                    params={"token": tfa_token, "_": cache_buster()},
+                ),
                 url,
-                headers=self._login_ajax_headers(),
-                params={"token": tfa_token, "_": cache_buster()},
-            ),
-            url,
-        )
-        accepted = bool(_data(payload, url))
+            )
+        except (ApiError, InvalidAuthError) as err:
+            _LOGGER.debug("Could not verify the saved TFA token: %s", err)
+            return False
+        accepted = payload.get("data") is True
         if not accepted:
             _LOGGER.debug("SC portal did not accept the saved TFA token")
         return accepted

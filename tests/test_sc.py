@@ -1,6 +1,7 @@
 """Tests for the Dominion Energy South Carolina backend."""
 # ruff: noqa: S105, S106, S107 - test tokens are not secrets
 
+import argparse
 import json
 import os
 import stat
@@ -9,6 +10,7 @@ from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiohttp import ClientSession
@@ -16,6 +18,7 @@ from aresponses import ResponsesMockServer
 
 from dompower import (
     ApiError,
+    CannotConnectError,
     DominionSCClient,
     IntervalUsageData,
     InvalidAuthError,
@@ -27,9 +30,10 @@ from dompower import (
     TFAVerificationError,
     create_sc_cookie_jar,
 )
+from dompower.sc import cli as sc_cli
 from dompower.sc import parse_bill_forecast, parse_registers, registers_to_intervals
 from dompower.sc.auth import find_verification_token
-from dompower.sc.cli import _save_state
+from dompower.sc.cli import _load_state, _save_state
 from dompower.sc.const import SC_TIMEZONE
 from dompower.sc.report import (
     _ReportState,
@@ -465,20 +469,50 @@ class TestSCAuthenticator:
             with pytest.raises(InvalidAuthError):
                 await SCAuthenticator(session).async_submit_credentials("u", "p")
 
+    @pytest.mark.parametrize(
+        "response",
+        [
+            {"data": False},
+            {"data": "false"},
+            {"data": {"isValid": False}},
+            {"data": None},
+            {"pageMessage": "error"},
+            "<html>not json</html>",
+            400,
+            403,
+        ],
+    )
     async def test_rejected_token_requires_tfa(
+        self, aresponses: ResponsesMockServer, response: object
+    ) -> None:
+        """Anything but "data": true makes async_login raise TFARequiredError."""
+        _add_login_start(aresponses)
+        if isinstance(response, int):
+            reply = aresponses.Response(status=response, text="error")
+        elif isinstance(response, str):
+            reply = aresponses.Response(text=response)
+        else:
+            reply = _json(aresponses, response)
+        aresponses.add(PORTAL, "/fusionapi/LoginWebApi/Verify2FAToken/", "GET", reply)
+
+        async with ClientSession() as session:
+            with pytest.raises(TFARequiredError):
+                await SCAuthenticator(session).async_login("u", "p", "old-token")
+
+    async def test_saved_token_server_error_raises(
         self, aresponses: ResponsesMockServer
     ) -> None:
-        """A rejected saved token makes async_login raise TFARequiredError."""
+        """A 5xx from the saved-token check raises, and does not ask for TFA."""
         _add_login_start(aresponses)
         aresponses.add(
             PORTAL,
             "/fusionapi/LoginWebApi/Verify2FAToken/",
             "GET",
-            _json(aresponses, {"data": False}),
+            aresponses.Response(status=503, text="down"),
         )
 
         async with ClientSession() as session:
-            with pytest.raises(TFARequiredError):
+            with pytest.raises(CannotConnectError):
                 await SCAuthenticator(session).async_login("u", "p", "old-token")
 
     async def test_interactive_tfa(self, aresponses: ResponsesMockServer) -> None:
@@ -1106,3 +1140,68 @@ class TestSCStateFile:
         tmp_path.chmod(0o755)
         _save_state(tmp_path / "sc.json", "user", "tfa-token")
         assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o755
+
+
+class TestSCStateLoad:
+    """Tests for reading the state file."""
+
+    @pytest.mark.parametrize(
+        "content",
+        ["{not json", "[1, 2]", '{"username": "u", "tfa_token": 5}', ""],
+    )
+    def test_bad_file_is_ignored(
+        self, tmp_path: Path, content: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A state file with bad content gives an empty state and a warning."""
+        path = tmp_path / "sc.json"
+        path.write_text(content)
+
+        assert _load_state(path) == {}
+        assert "Warning: Ignoring" in capsys.readouterr().err
+
+    def test_missing_file(self, tmp_path: Path) -> None:
+        """A missing state file gives an empty state."""
+        assert _load_state(tmp_path / "sc.json") == {}
+
+
+class TestSCUsageCommand:
+    """Tests for the sc-usage command setup."""
+
+    def _args(self, tmp_path: Path, username: str | None) -> argparse.Namespace:
+        path = tmp_path / "sc.json"
+        path.write_text('{"username": "saved-user", "tfa_token": "saved-token"}')
+        return argparse.Namespace(
+            state_file=path, username=username, gas=False, days=1, json=False
+        )
+
+    @pytest.mark.parametrize(
+        ("username", "expected_token"),
+        [(None, "saved-token"), ("saved-user", "saved-token"), ("other", None)],
+    )
+    async def test_saved_token_only_for_saved_user(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        username: str | None,
+        expected_token: str | None,
+    ) -> None:
+        """The saved TFA token is sent only for the saved username."""
+        client = MagicMock()
+        client.async_login = AsyncMock(side_effect=TFARequiredError("tfa"))
+        client_class = MagicMock(return_value=client)
+        monkeypatch.setattr(sc_cli, "DominionSCClient", client_class)
+        monkeypatch.setattr(sc_cli, "_password", lambda: "pw")
+
+        assert await sc_cli.cmd_sc_usage(self._args(tmp_path, username)) == 1
+        assert client_class.call_args.kwargs["tfa_token"] == expected_token
+
+    async def test_empty_password(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An empty password stops before any request."""
+        client_class = MagicMock()
+        monkeypatch.setattr(sc_cli, "DominionSCClient", client_class)
+        monkeypatch.setattr(sc_cli, "_password", lambda: "")
+
+        assert await sc_cli.cmd_sc_usage(self._args(tmp_path, None)) == 1
+        client_class.assert_not_called()

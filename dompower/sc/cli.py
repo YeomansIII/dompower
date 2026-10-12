@@ -102,11 +102,24 @@ def add_sc_parsers(subparsers: Any) -> None:
 
 
 def _load_state(path: Path) -> dict[str, str]:
-    """Load the SC state file, or return an empty dict."""
+    """Load the SC state file, or return an empty dict.
+
+    A file that is not a JSON object with string values is ignored with a
+    warning. The next sc-login replaces it.
+    """
     if not path.exists():
         return {}
-    with path.open() as f:
-        data: dict[str, str] = json.load(f)
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as err:
+        print(f"Warning: Ignoring {path}: {err}", file=sys.stderr)
+        return {}
+    if not isinstance(data, dict) or not all(
+        isinstance(value, str) for value in data.values()
+    ):
+        print(f"Warning: Ignoring {path}: unexpected content", file=sys.stderr)
+        return {}
     return data
 
 
@@ -207,14 +220,18 @@ async def cmd_sc_usage(args: argparse.Namespace) -> int:
     if not username:
         print("Error: Run 'dompower sc-login' first", file=sys.stderr)
         return 1
+    password = _password()
+    if not password:
+        print("Error: Password is required", file=sys.stderr)
+        return 1
+    # The saved TFA token belongs to the saved username only
+    tfa_token = state.get("tfa_token") if state.get("username") == username else None
     meter_type = MeterType.GAS if args.gas else MeterType.ELECTRIC
     end_date = date.today() - timedelta(days=1)
     start_date = end_date - timedelta(days=max(args.days, 1) - 1)
 
     async with aiohttp.ClientSession(cookie_jar=create_sc_cookie_jar()) as session:
-        client = DominionSCClient(
-            session, username, _password(), tfa_token=state.get("tfa_token")
-        )
+        client = DominionSCClient(session, username, password, tfa_token=tfa_token)
         try:
             sc_session = await client.async_login()
             registers = await client.async_get_register_usage(
