@@ -160,7 +160,7 @@ wheels = [
 
 [[package]]
 name = "dompower"
-version = "0.2.2"
+version = "0.3.0a1"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
