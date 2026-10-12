@@ -11,8 +11,10 @@ The report must be safe to post in public:
 - HTML pages show the size only.
 - Green Button XML shows element names, readings, and the numeric codes of
   ReadingType, LocalTimeParameters, and the UsagePoint service kind.
-  UsagePoint IDs are replaced with "register-1", "register-2".
+  UsagePoint IDs are replaced with "register-1", "register-2". Entry
+  titles are shown only for an allowlist of generic Green Button titles.
 - Query values are shown only for an allowlist of parameters.
+- Error messages show quoted values only if they are numbers or dates.
 - At the end, known secrets, email addresses, and phone numbers are
   replaced in the full text.
 """
@@ -61,8 +63,22 @@ _LONG_DIGITS_RE = re.compile(r"\d{4,}")
 _USER_PATH_RE = re.compile(r"/users/[^/]+/")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(\.[\w-]+)+")
 _PHONE_RE = re.compile(r"\(?\b\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b")
+_QUOTED_RE = re.compile(r"'[^']*'|\"[^\"]*\"")
 
 REDACTED = "<redacted>"
+
+# Generic Atom entry titles that a real Bidgely export used. Other titles
+# (for example a UsagePoint or ServiceDeliveryPoint title) can contain a
+# service address or a meter number, so the report shows only their length.
+# The report compares the text before the first '.' or ':'.
+_SAFE_TITLES = frozenset(
+    {
+        "Green Button Data File",
+        "Interval Consumption",
+        "Time Configuration",
+        "Type of Meter Reading Data",
+    }
+)
 
 # Green Button elements that show numeric values. Other elements show only
 # their field names.
@@ -142,6 +158,39 @@ def json_shape(value: Any, key: str | None = None) -> Any:
 def _is_safe_key(key: str) -> bool:
     """Return True if a JSON key looks like a field name, not like data."""
     return bool(_SAFE_KEY_RE.match(key)) and not _LONG_DIGITS_RE.search(key)
+
+
+def _describe_title(title: str) -> str:
+    """Return an entry title if it is a generic title, or a placeholder."""
+    prefix = re.split(r"[.:]", title, maxsplit=1)[0].strip()
+    if not prefix:
+        return "(no title)"
+    if prefix in _SAFE_TITLES:
+        return prefix
+    return f"<other title, {len(title)} chars>"
+
+
+def _number_or_size(text: str) -> str:
+    """Return a numeric XML value, or a placeholder for other text."""
+    text = text.strip()
+    return text if _NUMBER_RE.match(text) else f"<string, {len(text)} chars>"
+
+
+def describe_error(err: Exception) -> str:
+    """Return an error for the report, without quoted response values.
+
+    Some error messages contain a value from a response, for example
+    "invalid literal for int() with base 10: '...'". The report shows a
+    quoted value only if it is a number or a date.
+    """
+
+    def mask(match: re.Match[str]) -> str:
+        value = match.group(0)[1:-1]
+        if _NUMBER_RE.match(value) or _DATE_RE.match(value):
+            return match.group(0)
+        return f"<string, {len(value)} chars>"
+
+    return f"{type(err).__name__}: {_QUOTED_RE.sub(mask, str(err))}"
 
 
 def _local_name(tag: str) -> str:
@@ -225,7 +274,7 @@ def summarize_green_button(xml_text: str, state: _ReportState) -> list[str]:
     raw_reads: dict[str, list[str]] = {}
     for entry in root.findall("atom:entry", _NS):
         title = entry.findtext("atom:title", default="", namespaces=_NS)
-        titles[re.split(r"[.:]", title, maxsplit=1)[0].strip() or "(no title)"] += 1
+        titles[_describe_title(title)] += 1
         up_id = _usage_point_id(entry)
         label = state.label(up_id) if up_id else "(no register)"
         content = entry.find("atom:content", _NS)
@@ -243,7 +292,7 @@ def summarize_green_button(xml_text: str, state: _ReportState) -> list[str]:
             details.append(f"  {label} {name}:")
             details += [f"    {k}: {v}" for k, v in _leaf_fields(child).items()]
 
-    lines.append("Entry titles (text before the first '.' or ':'):")
+    lines.append("Entry titles (text before the first '.' or ':', generic only):")
     lines += [f"  {title}: {count}" for title, count in sorted(titles.items())]
     lines.append("Other content (first entry of each kind):")
     lines += details or ["  (none)"]
@@ -256,13 +305,15 @@ def summarize_green_button(xml_text: str, state: _ReportState) -> list[str]:
 
 def _describe_raw_read(reading: ET.Element) -> str:
     """Return a raw reading with both ways to read its epoch value."""
-    start = reading.findtext("espi:timePeriod/espi:start", "", _NS)
-    duration = reading.findtext("espi:timePeriod/espi:duration", "", _NS)
-    value = reading.findtext("espi:value", "", _NS)
+    start = _number_or_size(reading.findtext("espi:timePeriod/espi:start", "", _NS))
+    duration = _number_or_size(
+        reading.findtext("espi:timePeriod/espi:duration", "", _NS)
+    )
+    value = _number_or_size(reading.findtext("espi:value", "", _NS))
     try:
         epoch = int(start)
     except ValueError:
-        return f"start={start!r} duration={duration} value={value}"
+        return f"start={start} duration={duration} value={value}"
     as_wall = bidgely_epoch_to_local(epoch).strftime("%Y-%m-%d %H:%M")
     as_utc = datetime.fromtimestamp(epoch, SC_TIMEZONE).strftime("%Y-%m-%d %H:%M %Z")
     return (
@@ -411,7 +462,7 @@ async def async_build_report(
             summary.append("Saved TFA token accepted: no (run 'dompower sc-login')")
         except Exception as err:  # The report shows every error.
             sc_session = None
-            state.errors.append(f"login: {type(err).__name__}: {err}")
+            state.errors.append(f"login: {describe_error(err)}")
 
         if sc_session is not None:
             account = sc_session.account
@@ -465,7 +516,7 @@ async def _async_meter_section(
             start_date, end_date, meter_type
         )
     except Exception as err:  # The report shows every error.
-        state.errors.append(f"{meter_type.value} data: {type(err).__name__}: {err}")
+        state.errors.append(f"{meter_type.value} data: {describe_error(err)}")
         return title, ["Failed, see Errors."]
 
     lines = _summarize_registers(registers, meter_type, state)
@@ -488,7 +539,7 @@ async def _async_bill_section(
     try:
         forecast = await client.async_get_bill_forecast()
     except Exception as err:  # The report shows every error.
-        state.errors.append(f"bill forecast: {type(err).__name__}: {err}")
+        state.errors.append(f"bill forecast: {describe_error(err)}")
         return title, ["Failed, see Errors."]
     return title, [
         f"period: {forecast.period_start} to {forecast.period_end}",

@@ -373,7 +373,9 @@ user ID. It shows:
 - Each request (path and HTTP status) and the JSON field names of each
   response. Most values show only as `<string, N chars>` or `<number>`.
 - The meter registers, readings per day, and daily and hourly totals.
-- The structure of the Green Button XML and some raw readings.
+- The structure of the Green Button XML and some raw readings. Entry titles
+  show only if they are generic Green Button titles, such as
+  "Interval Consumption".
 - The bill forecast amounts.
 
 If a step fails, the report still includes the error and the responses up

@@ -25,7 +25,14 @@ from dompower import (
 from dompower.sc import parse_bill_forecast, parse_registers, registers_to_intervals
 from dompower.sc.auth import find_verification_token
 from dompower.sc.const import SC_TIMEZONE
-from dompower.sc.report import async_build_report, json_shape, redact
+from dompower.sc.report import (
+    _ReportState,
+    async_build_report,
+    describe_error,
+    json_shape,
+    redact,
+    summarize_green_button,
+)
 
 PORTAL = "account.dominionenergysc.com"
 BIDGELY = "desc-prodapi.bidgely.com"
@@ -129,6 +136,34 @@ def _add_full_login(aresponses: ResponsesMockServer, access_token: str) -> None:
         _json(aresponses, {"data": True}),
     )
     _add_login_finish(aresponses, access_token=access_token)
+
+
+def _entry(
+    title: str,
+    readings: list[tuple[int | str, int | str]] | None = None,
+    usage_point: str = "UP1",
+) -> str:
+    """Return one Atom entry. Readings are (start, value) with 900 s intervals."""
+    reads = "".join(
+        "<espi:IntervalReading><espi:timePeriod>"
+        f"<espi:duration>900</espi:duration><espi:start>{start}</espi:start>"
+        f"</espi:timePeriod><espi:value>{value}</espi:value></espi:IntervalReading>"
+        for start, value in readings or []
+    )
+    content = f"<espi:IntervalBlock>{reads}</espi:IntervalBlock>" if reads else ""
+    href = f"https://naapi2.bidgely.com/UsagePoint/{usage_point}/IntervalBlock/1"
+    return (
+        f'<entry><link href="{href}" rel="self"/><title>{title}</title>'
+        f"<content>{content}</content></entry>"
+    )
+
+
+def _green_button_xml(entries: list[str]) -> str:
+    """Return a Green Button feed with the entries."""
+    return (
+        '<feed xmlns="http://www.w3.org/2005/Atom" xmlns:espi="http://naesb.org/espi">'
+        f"{''.join(entries)}</feed>"
+    )
 
 
 class TestGreenButtonParser:
@@ -562,7 +597,11 @@ class TestSCReport:
             )
 
         assert "Login complete: no" in report
-        assert "InvalidAuthError: Unexpected SC login status: 'mystery'" in report
+        # The error masks the quoted value. The allowlisted "status" field
+        # in the response section still shows it.
+        assert (
+            "InvalidAuthError: Unexpected SC login status: <string, 7 chars>" in report
+        )
         assert '"status": "mystery"' in report
         assert "password1" not in report
 
@@ -585,6 +624,96 @@ class TestSCReport:
 
         assert "Saved TFA token accepted: no (run 'dompower sc-login')" in report
         assert "old-token" not in report
+
+    async def test_report_masks_values_in_errors(
+        self, aresponses: ResponsesMockServer
+    ) -> None:
+        """A parse error does not show the text value from the XML."""
+        _add_full_login(aresponses, "bearer-1")
+        bad_xml = _green_button_xml(
+            [_entry("Interval Consumption", [(1786579200, "12 Oak Lane")])]
+        )
+        path = "/v2.0/dashboard/users/user-123/gb-download"
+        for _ in range(2):  # electric and gas
+            aresponses.add(BIDGELY, path, "GET", aresponses.Response(body=bad_xml))
+        aresponses.add(PORTAL, "/", "GET", aresponses.Response(body=HOME_HTML))
+        aresponses.add(
+            PORTAL,
+            "/fusionapi/CommonWebApi/GetAccountAMIUsageAlerts/",
+            "GET",
+            _json(aresponses, ALERTS),
+        )
+
+        async with ClientSession() as session:
+            report = await async_build_report(
+                session, "u", "p", "t", today=date(2026, 8, 15)
+            )
+
+        assert "Oak Lane" not in report
+        assert (
+            "electric data: ApiError: Unexpected value in Green Button XML: "
+            "could not convert string to float: <string, 11 chars>"
+        ) in report
+
+    def test_entry_titles_allowlist(self) -> None:
+        """Only generic entry titles are shown. Other titles show the length."""
+        xml = _green_button_xml(
+            [
+                _entry("Green Button Data File"),
+                _entry("Time Configuration"),
+                _entry("Type of Meter Reading Data"),
+                _entry("Interval Consumption. Start: 2026-08-13 00:00:00"),
+                _entry("Interval Consumption. Start: 2026-08-14 00:00:00"),
+                _entry("12 Oak Lane, Columbia SC"),
+                _entry("Meter AB12345: Electric"),
+                _entry(""),
+            ]
+        )
+        lines = summarize_green_button(xml, _ReportState())
+        text = "\n".join(lines)
+
+        start = lines.index(
+            "Entry titles (text before the first '.' or ':', generic only):"
+        )
+        assert lines[start + 1 : start + 9] == [
+            "  (no title): 1",
+            "  <other title, 23 chars>: 1",
+            "  <other title, 24 chars>: 1",
+            "  Green Button Data File: 1",
+            "  Interval Consumption: 2",
+            "  Time Configuration: 1",
+            "  Type of Meter Reading Data: 1",
+            "Other content (first entry of each kind):",
+        ]
+        assert "Oak" not in text
+        assert "AB12345" not in text
+
+    def test_raw_reads_hide_text_values(self) -> None:
+        """Raw readings show only numbers. Other text shows the length."""
+        xml = _green_button_xml(
+            [
+                _entry(
+                    "Interval Consumption",
+                    [(1786579200, "209"), ("Oak Lane", "Mr Smith")],
+                )
+            ]
+        )
+        text = "\n".join(summarize_green_button(xml, _ReportState()))
+
+        assert "start=1786579200 duration=900 value=209 |" in text
+        assert "start=<string, 8 chars> duration=900 value=<string, 8 chars>" in text
+        assert "Oak" not in text
+        assert "Smith" not in text
+
+    def test_describe_error(self) -> None:
+        """Quoted values show only if they are numbers or dates."""
+        err = ApiError(
+            "Bad value 'Jane Doe', \"12 Oak Lane\", '209', '2026-08-13T00:00:00'"
+        )
+        assert describe_error(err) == (
+            "ApiError: Bad value <string, 8 chars>, <string, 11 chars>, "
+            "'209', '2026-08-13T00:00:00'"
+        )
 
     def test_redact(self) -> None:
         """Secrets, email addresses, and phone numbers are replaced."""
