@@ -123,7 +123,7 @@ def parse_bill_forecast(payload: dict[str, object]) -> SCBillForecast:
             ),
             last_year_cost=last_year,
         )
-    except (KeyError, TypeError, ValueError) as err:
+    except (KeyError, TypeError, ValueError, AttributeError) as err:
         raise ApiError(f"Unexpected SC bill forecast response: {err}") from err
 
 

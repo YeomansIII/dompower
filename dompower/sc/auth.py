@@ -106,8 +106,23 @@ def find_verification_token(html: str) -> str:
 def _data(payload: dict[str, Any], url: str) -> Any:
     """Return the "data" member of a fusionapi response."""
     if "data" not in payload:
-        raise ApiError(f"Response from {url} has no 'data' member")
+        raise ApiError(f"Response from {url} has no data member")
     return payload["data"]
+
+
+def _data_object(payload: dict[str, Any], url: str) -> dict[str, Any]:
+    """Return the "data" member of a fusionapi response that must be an object.
+
+    Raises:
+        ApiError: If "data" is missing or is not a JSON object.
+    """
+    data = _data(payload, url)
+    if not isinstance(data, dict):
+        raise ApiError(
+            f"Response from {url} has a data member that is not an object "
+            f"({type(data).__name__})"
+        )
+    return data
 
 
 class SCAuthenticator:
@@ -187,6 +202,7 @@ class SCAuthenticator:
         Raises:
             InvalidCredentialsError: If the username or password is wrong.
             InvalidAuthError: If the portal returns an unknown login status.
+            ApiError: If the response has an unexpected format.
         """
         self._tfa_complete = False
         self._tfa_token = None
@@ -210,7 +226,7 @@ class SCAuthenticator:
             ),
             url,
         )
-        status = (_data(payload, url) or {}).get("status")
+        status = _data_object(payload, url).get("status")
         if status == SC_AUTH_STATUS_FAILED:
             raise InvalidCredentialsError("Invalid SC username or password")
         if status != SC_AUTH_STATUS_TFA:
@@ -237,6 +253,9 @@ class SCAuthenticator:
 
         Args:
             preferred_provider: If set, return only targets of this type.
+
+        Raises:
+            ApiError: If the response has an unexpected format.
         """
         url = f"{SC_PORTAL_URL}{SC_INIT_AUTHENTICATION}"
         payload = decode_json(
@@ -250,11 +269,15 @@ class SCAuthenticator:
             url,
         )
         try:
-            user_info = _data(payload, url)["userInfo"]
+            user_info = _data_object(payload, url)["userInfo"]
             phones = user_info.get("phoneNumbers") or []
             emails = user_info.get("emailAddresses") or []
         except (KeyError, TypeError, AttributeError) as err:
             raise ApiError("Unexpected SC InitAuthentication response") from err
+        # A string is iterable, so check the type. Each character of a
+        # string would otherwise become a TFA target.
+        if not isinstance(phones, list) or not isinstance(emails, list):
+            raise ApiError("Unexpected SC InitAuthentication response")
 
         targets = [
             TFATarget(id=str(phone), obfuscated=str(phone), provider=TFAProvider.PHONE)
@@ -295,6 +318,7 @@ class SCAuthenticator:
 
         Raises:
             TFAVerificationError: If the code is wrong.
+            ApiError: If the response has an unexpected format.
         """
         url = f"{SC_PORTAL_URL}{SC_VERIFY_PIN}"
         payload = decode_json(
@@ -308,7 +332,9 @@ class SCAuthenticator:
             url,
         )
         data = _data(payload, url) or {}
-        if not isinstance(data, dict) or not data.get("isVerified"):
+        if not isinstance(data, dict):
+            raise ApiError(f"Unexpected SC VerifyPIN response ({type(data).__name__})")
+        if not data.get("isVerified"):
             raise TFAVerificationError("SC TFA code is not correct")
         token = data.get("token")
         if not token:
@@ -337,7 +363,7 @@ class SCAuthenticator:
         headers = ajax_headers(find_verification_token(home_page), _HOME_REFERER)
 
         url = f"{SC_PORTAL_URL}{SC_ACCOUNT_LISTING}"
-        listing = _data(
+        listing = _data_object(
             decode_json(
                 await async_request_text(
                     self._session,
@@ -350,14 +376,14 @@ class SCAuthenticator:
             ),
             url,
         )
-        if not isinstance(listing, dict) or listing.get("singleAccount") is not True:
+        if listing.get("singleAccount") is not True:
             raise ApiError(
                 "This SC login has more than one account. "
                 "Multiple SC accounts are not supported yet."
             )
 
         url = f"{SC_PORTAL_URL}{SC_INIT_ACCOUNT}"
-        account_data = _data(
+        account_data = _data_object(
             decode_json(
                 await async_request_text(
                     self._session,
@@ -376,7 +402,7 @@ class SCAuthenticator:
             raise ApiError("Unexpected SC InitAccount response") from err
 
         url = f"{SC_PORTAL_URL}{SC_BIDGELY_SDK_INIT}"
-        sdk_init = _data(
+        sdk_init = _data_object(
             decode_json(
                 await async_request_text(
                     self._session,
@@ -422,7 +448,7 @@ class SCAuthenticator:
                 for m in mappings
                 if m.get("measurementType") in _MEASUREMENT_TO_METER_TYPE
             ]
-        except (KeyError, TypeError) as err:
+        except (KeyError, TypeError, AttributeError) as err:
             raise ApiError("Unexpected Bidgely wc-session response") from err
 
         _LOGGER.debug("SC login complete, meter types: %s", meter_types)

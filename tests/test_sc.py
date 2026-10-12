@@ -78,6 +78,7 @@ def _add_login_finish(
     *,
     single_account: bool = True,
     access_token: str = "bearer-1",
+    mappings: list[Any] | None = None,
 ) -> None:
     """Mock the calls after TFA, up to the Bidgely bearer token."""
     aresponses.add(PORTAL, "/", "GET", aresponses.Response(body=HOME_HTML))
@@ -121,11 +122,15 @@ def _add_login_finish(
                     "tokenDetails": {"accessToken": access_token},
                     "userProfileDetails": {"userId": "user-123"},
                     "userTypeDetails": {
-                        "measurementToUserTypeMappings": [
-                            {"measurementType": "ELECTRIC"},
-                            {"measurementType": "GAS"},
-                            {"measurementType": "WATER"},
-                        ]
+                        "measurementToUserTypeMappings": (
+                            mappings
+                            if mappings is not None
+                            else [
+                                {"measurementType": "ELECTRIC"},
+                                {"measurementType": "GAS"},
+                                {"measurementType": "WATER"},
+                            ]
+                        )
                     },
                 }
             },
@@ -404,6 +409,15 @@ class TestBillForecast:
         with pytest.raises(ApiError):
             parse_bill_forecast({"data": {}})
 
+    @pytest.mark.parametrize(
+        "payload",
+        [{"data": "text"}, {"data": ["a"]}, {"data": {"amiUsageAlert": "text"}}],
+    )
+    def test_not_an_object(self, payload: dict[str, Any]) -> None:
+        """A data or amiUsageAlert value that is not an object raises ApiError."""
+        with pytest.raises(ApiError, match="Unexpected SC bill forecast response"):
+            parse_bill_forecast(payload)
+
 
 class TestVerificationToken:
     """Tests for the verification token scraper."""
@@ -553,6 +567,138 @@ class TestSCAuthenticator:
 
         async with ClientSession() as session:
             with pytest.raises(ApiError, match="more than one account"):
+                await SCAuthenticator(session).async_login("u", "p", "token")
+
+    @pytest.mark.parametrize("data", ["twoFA", ["twoFA"], 1, None])
+    async def test_authenticate_data_not_object(
+        self, aresponses: ResponsesMockServer, data: Any
+    ) -> None:
+        """An Authenticate data member that is not an object raises ApiError."""
+        aresponses.add(PORTAL, "/access/", "GET", aresponses.Response(body=LOGIN_HTML))
+        aresponses.add(
+            PORTAL,
+            "/fusionapi/LoginWebApi/Authenticate/",
+            "POST",
+            _json(aresponses, {"data": data}),
+        )
+
+        async with ClientSession() as session:
+            with pytest.raises(ApiError, match="data member that is not an object"):
+                await SCAuthenticator(session).async_submit_credentials("u", "p")
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            "text",
+            {"userInfo": "text"},
+            {"userInfo": {"phoneNumbers": "803-555-1234"}},
+            {"userInfo": {"emailAddresses": {"a": "j@example.com"}}},
+        ],
+    )
+    async def test_tfa_options_bad_format(
+        self, aresponses: ResponsesMockServer, data: Any
+    ) -> None:
+        """InitAuthentication data with the wrong types raises ApiError."""
+        _add_login_start(aresponses)
+        aresponses.add(
+            PORTAL,
+            "/fusionapi/LoginWebApi/InitAuthentication/",
+            "GET",
+            _json(aresponses, {"data": data}),
+        )
+
+        async with ClientSession() as session:
+            auth = SCAuthenticator(session)
+            await auth.async_submit_credentials("u", "p")
+            with pytest.raises(ApiError):
+                await auth.async_get_tfa_options()
+
+    @pytest.mark.parametrize(
+        ("data", "error"),
+        [
+            ("verified", ApiError),
+            (["verified"], ApiError),
+            (None, TFAVerificationError),
+            (False, TFAVerificationError),
+        ],
+    )
+    async def test_verify_pin_data_types(
+        self, aresponses: ResponsesMockServer, data: Any, error: type[Exception]
+    ) -> None:
+        """Other data raises ApiError. Empty data means a wrong code."""
+        _add_login_start(aresponses)
+        aresponses.add(
+            PORTAL,
+            "/fusionapi/LoginWebApi/VerifyPIN/",
+            "POST",
+            _json(aresponses, {"data": data}),
+        )
+
+        async with ClientSession() as session:
+            auth = SCAuthenticator(session)
+            await auth.async_submit_credentials("u", "p")
+            with pytest.raises(error):
+                await auth.async_verify_tfa_code("123456")
+
+    @pytest.mark.parametrize(
+        "bad_path",
+        [
+            "/fusionapi/AccountManagementWebApi/GetAccountListing/",
+            "/fusionapi/AccountSummaryWebApi/InitAccount/",
+            "/fusionapi/BidgelyWebApi/GetBidgelySDKInit/",
+        ],
+    )
+    async def test_complete_login_data_not_object(
+        self, aresponses: ResponsesMockServer, bad_path: str
+    ) -> None:
+        """A data member that is not an object raises ApiError, not a crash."""
+        good_data: dict[str, Any] = {
+            "/fusionapi/AccountManagementWebApi/GetAccountListing/": {
+                "singleAccount": True
+            },
+            "/fusionapi/AccountSummaryWebApi/InitAccount/": {
+                "account": {"serviceAddressAndAccountNo": "1 MAIN ST"}
+            },
+            "/fusionapi/BidgelyWebApi/GetBidgelySDKInit/": {"payload": "encrypted"},
+        }
+        _add_login_start(aresponses)
+        aresponses.add(
+            PORTAL,
+            "/fusionapi/LoginWebApi/Verify2FAToken/",
+            "GET",
+            _json(aresponses, {"data": True}),
+        )
+        aresponses.add(PORTAL, "/", "GET", aresponses.Response(body=HOME_HTML))
+        for path, data in good_data.items():
+            bad = path == bad_path
+            aresponses.add(
+                PORTAL,
+                path,
+                "GET",
+                _json(aresponses, {"data": "text" if bad else data}),
+            )
+            if bad:
+                break
+
+        async with ClientSession() as session:
+            with pytest.raises(ApiError, match="data member that is not an object"):
+                await SCAuthenticator(session).async_login("u", "p", "token")
+
+    async def test_wc_session_mapping_not_object(
+        self, aresponses: ResponsesMockServer
+    ) -> None:
+        """A measurement mapping that is not an object raises ApiError."""
+        _add_login_start(aresponses)
+        aresponses.add(
+            PORTAL,
+            "/fusionapi/LoginWebApi/Verify2FAToken/",
+            "GET",
+            _json(aresponses, {"data": True}),
+        )
+        _add_login_finish(aresponses, mappings=["ELECTRIC"])
+
+        async with ClientSession() as session:
+            with pytest.raises(ApiError, match="Unexpected Bidgely wc-session"):
                 await SCAuthenticator(session).async_login("u", "p", "token")
 
 
