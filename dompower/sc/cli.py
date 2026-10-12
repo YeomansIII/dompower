@@ -3,7 +3,7 @@
 These commands let SC users test the backend and send useful output in
 bug reports:
 
-    dompower sc-login --username you@example.com
+    dompower sc-login --username your-username
     dompower sc-usage --days 3
 """
 

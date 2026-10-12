@@ -45,7 +45,7 @@ Examples:
   dompower --token-file tokens.json refresh
 
   # South Carolina: log in once, then show usage
-  dompower sc-login -u you@example.com
+  dompower sc-login -u your-username
   dompower sc-usage --days 3
 
   # South Carolina: write a redacted report for a GitHub issue

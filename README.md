@@ -348,7 +348,8 @@ work only for Virginia and North Carolina.
 
 ```bash
 # Log in once. This does TFA and saves a TFA token to ~/.dompower/sc.json.
-dompower sc-login -u you@example.com
+# Use your SC portal username. It is not always your email address.
+dompower sc-login -u your-username
 
 # Show the account, meter registers, daily totals, and bill forecast.
 # Set DOMPOWER_SC_PASSWORD to skip the password prompt.
