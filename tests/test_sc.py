@@ -2,7 +2,7 @@
 # ruff: noqa: S105, S106, S107 - test tokens are not secrets
 
 import json
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +13,7 @@ from aresponses import ResponsesMockServer
 from dompower import (
     ApiError,
     DominionSCClient,
+    IntervalUsageData,
     InvalidAuthError,
     InvalidCredentialsError,
     MeterType,
@@ -27,6 +28,7 @@ from dompower.sc.auth import find_verification_token
 from dompower.sc.const import SC_TIMEZONE
 from dompower.sc.report import (
     _ReportState,
+    _summarize_registers,
     async_build_report,
     describe_error,
     json_shape,
@@ -218,6 +220,150 @@ class TestRegistersToIntervals:
         )
         assert intervals[0].consumption == 100
         assert intervals[0].unit == "ft³"
+
+
+# Wall-time epochs (local midnight encoded as UTC) for the 2026 DST days.
+FALL_BACK_MIDNIGHT = int(datetime(2026, 11, 1, tzinfo=UTC).timestamp())
+SPRING_FORWARD_MIDNIGHT = int(datetime(2026, 3, 8, tzinfo=UTC).timestamp())
+
+
+def _fall_back_epochs() -> list[int]:
+    """Return the 100 wall-time epochs of 2026-11-01, in reading order.
+
+    The 01:00-01:45 wall times show two times: first EDT, then EST.
+    """
+    quarters = [*range(8), *range(4, 96)]
+    return [FALL_BACK_MIDNIGHT + q * 900 for q in quarters]
+
+
+def _hourly_by_utc(
+    intervals: list[IntervalUsageData],
+) -> dict[datetime, list[IntervalUsageData]]:
+    """Group intervals by the UTC hour."""
+    hours: dict[datetime, list[IntervalUsageData]] = {}
+    for interval in intervals:
+        hour = interval.timestamp.astimezone(UTC).replace(minute=0)
+        hours.setdefault(hour, []).append(interval)
+    return hours
+
+
+class TestDaylightSavingTime:
+    """Tests for the DST change days. Bidgely epochs are wall time."""
+
+    def test_fall_back_day_has_25_hours(self) -> None:
+        """The repeated 01:00 hour is EST, and no hour is doubled."""
+        readings = list(zip(_fall_back_epochs(), range(1, 101), strict=True))
+        xml = _green_button_xml([_entry("Interval Consumption", readings)])
+        registers = parse_registers(xml)
+        reads = registers[0].reads
+        assert len(reads) == 100
+        assert len({r.start.astimezone(UTC) for r in reads}) == 100
+
+        intervals = registers_to_intervals(registers)
+        assert len(intervals) == 100
+        utc_times = [i.timestamp.astimezone(UTC) for i in intervals]
+        assert utc_times == sorted(set(utc_times))
+        assert {i.timestamp.date() for i in intervals} == {date(2026, 11, 1)}
+
+        hours = _hourly_by_utc(intervals)
+        assert len(hours) == 25
+        for n, (hour, slots) in enumerate(sorted(hours.items())):
+            # Local midnight (EDT) is 04:00 UTC.
+            assert hour == datetime(2026, 11, 1, 4, tzinfo=UTC) + timedelta(hours=n)
+            assert len(slots) == 4
+            # Reading values are 1..100 Wh in reading order.
+            expected_wh = sum(range(4 * n + 1, 4 * n + 5))
+            consumption = sum(s.consumption for s in slots)
+            assert consumption == pytest.approx(expected_wh / 1000)
+
+        first, second = (
+            sorted(hours.items())[1][1][0].timestamp,
+            sorted(hours.items())[2][1][0].timestamp,
+        )
+        assert (first.hour, first.fold, first.tzname()) == (1, 0, "EDT")
+        assert (second.hour, second.fold, second.tzname()) == (1, 1, "EST")
+
+    def test_fall_back_two_registers(self) -> None:
+        """Grid and solar readings of the same repeated hour stay together."""
+        epochs = _fall_back_epochs()
+        xml = _green_button_xml(
+            [
+                _entry(
+                    "Interval Consumption",
+                    [(e, 100) for e in epochs],
+                    usage_point="UP_GRID",
+                ),
+                _entry(
+                    "Interval Consumption",
+                    [(e, -10 if i < 8 else -20) for i, e in enumerate(epochs)],
+                    usage_point="UP_SOLAR",
+                ),
+            ]
+        )
+        intervals = registers_to_intervals(parse_registers(xml))
+
+        assert len(intervals) == 100
+        assert all(i.consumption == pytest.approx(0.1) for i in intervals)
+        hours = sorted(_hourly_by_utc(intervals).items())
+        assert len(hours) == 25
+        generation = [round(sum(s.generation for s in slots), 3) for _, slots in hours]
+        assert generation == [0.04, 0.04] + [0.08] * 23
+
+    def test_fall_back_report_hours(self) -> None:
+        """The report shows the two 01:00 hours with their time zone names."""
+        xml = _green_button_xml(
+            [_entry("Interval Consumption", [(e, 250) for e in _fall_back_epochs()])]
+        )
+        lines = _summarize_registers(
+            parse_registers(xml), MeterType.ELECTRIC, _ReportState()
+        )
+
+        assert "    readings: 100" in lines
+        assert "  2026-11-01: consumption 25.000, generation 0.000" in lines
+        hourly = lines[lines.index("Hourly totals for 2026-11-01 (kWh):") + 1 :]
+        assert len(hourly) == 25
+        assert hourly[1:3] == [
+            "  01:00 EDT consumption 1.000, generation 0.000",
+            "  01:00 EST consumption 1.000, generation 0.000",
+        ]
+
+    def test_spring_forward_day_has_23_hours(self) -> None:
+        """Without 02:00-02:59 readings, the day has 92 readings in 23 hours."""
+        quarters = [*range(8), *range(12, 96)]
+        epochs = [SPRING_FORWARD_MIDNIGHT + q * 900 for q in quarters]
+        xml = _green_button_xml(
+            [_entry("Interval Consumption", [(e, 100) for e in epochs])]
+        )
+        intervals = registers_to_intervals(parse_registers(xml))
+
+        assert len(intervals) == 92
+        hours = _hourly_by_utc(intervals)
+        assert len(hours) == 23
+        assert all(len(slots) == 4 for slots in hours.values())
+        assert intervals[8].timestamp == datetime(2026, 3, 8, 3, tzinfo=SC_TIMEZONE)
+        assert intervals[8].timestamp.tzname() == "EDT"
+
+    def test_spring_forward_gap_readings(self) -> None:
+        """Readings at 02:00-02:59 move to 03:00 EDT. The day total stays."""
+        epochs = [SPRING_FORWARD_MIDNIGHT + q * 900 for q in range(96)]
+        # A repeated gap time must not become fold=1 (01:xx EST).
+        epochs.append(SPRING_FORWARD_MIDNIGHT + 9 * 900)
+        xml = _green_button_xml(
+            [_entry("Interval Consumption", [(e, 100) for e in epochs])]
+        )
+        registers = parse_registers(xml)
+        for read in registers[0].reads:
+            # Every start is a real local time.
+            assert read.start.astimezone(UTC).astimezone(SC_TIMEZONE) == read.start
+            assert read.start.hour != 2
+
+        intervals = registers_to_intervals(registers)
+        assert sum(i.consumption for i in intervals) == pytest.approx(9.7)
+        hours = sorted(_hourly_by_utc(intervals).items())
+        assert len(hours) == 23
+        assert [len(slots) for _, slots in hours][:3] == [4, 4, 4]
+        three_am = [s for _, slots in hours for s in slots if s.timestamp.hour == 3]
+        assert sum(s.consumption for s in three_am) == pytest.approx(0.9)
 
 
 class TestBillForecast:

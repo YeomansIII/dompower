@@ -28,7 +28,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any
 
@@ -372,15 +372,19 @@ def _summarize_registers(
     ]
 
     last_day = max(daily)
-    hourly: dict[int, list[float]] = {}
+    # Key by the UTC hour. On the DST fall-back day, the two 01:00 hours
+    # have the same local hour. The time zone name tells them apart.
+    hourly: dict[datetime, list[float]] = {}
     for interval in intervals:
         if interval.timestamp.date() == last_day:
-            totals = hourly.setdefault(interval.timestamp.hour, [0.0, 0.0])
+            hour = interval.timestamp.astimezone(UTC).replace(minute=0, second=0)
+            totals = hourly.setdefault(hour, [0.0, 0.0])
             totals[0] += interval.consumption
             totals[1] += interval.generation
     lines.append(f"Hourly totals for {last_day} ({unit}):")
     lines += [
-        f"  {hour:02d}:00 consumption {c:.3f}, generation {g:.3f}"
+        f"  {hour.astimezone(SC_TIMEZONE):%H:%M %Z} "
+        f"consumption {c:.3f}, generation {g:.3f}"
         for hour, (c, g) in sorted(hourly.items())
     ]
     return lines

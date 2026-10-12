@@ -416,6 +416,13 @@ SC data differs from VA/NC data:
 - Solar export is a separate meter register with negative values. The client
   puts positive values in `consumption` and negative values in `generation`.
   `async_get_register_usage()` returns the raw readings for each register.
+- Timestamps are in `America/New_York`. On the DST fall-back day, the two
+  01:00-01:59 hours have the same wall times. The second hour has `fold=1`
+  (EST), so the day has 25 hours (100 electric intervals). Datetimes that
+  differ only in `fold` compare equal. To group or deduplicate intervals,
+  use `timestamp.astimezone(UTC)` as the key. On the spring-forward day,
+  02:00-02:59 does not exist. If Bidgely sends readings for these times,
+  the client moves them to 03:00-03:59 EDT and adds them to those intervals.
 - `SCBillForecast` has the cost to date, the forecasted cost, and last year's
   cost. The dollar values include electric and gas together.
 - A login with more than one account raises `ApiError`.

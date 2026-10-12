@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, TypeVar
 
 from ..exceptions import ApiError, InvalidAuthError
@@ -68,28 +68,31 @@ def registers_to_intervals(
         meter_type: ELECTRIC (values in Wh, output in kWh) or GAS (ft³).
 
     Returns:
-        Intervals sorted by timestamp.
+        Intervals sorted by timestamp. Timestamps are in America/New_York.
     """
     unit, factor = _UNIT_AND_FACTOR[meter_type]
+    # Key by the UTC instant. The two 01:00 hours on the DST fall-back day
+    # differ only in ``fold``, and such local datetimes compare equal.
     consumption: dict[datetime, float] = {}
     generation: dict[datetime, float] = {}
     for register in registers:
         for read in register.reads:
-            consumption.setdefault(read.start, 0.0)
-            generation.setdefault(read.start, 0.0)
+            key = read.start.astimezone(UTC)
+            consumption.setdefault(key, 0.0)
+            generation.setdefault(key, 0.0)
             if read.value >= 0:
-                consumption[read.start] += read.value * factor
+                consumption[key] += read.value * factor
             else:
-                generation[read.start] += -read.value * factor
+                generation[key] += -read.value * factor
 
     return [
         IntervalUsageData(
-            timestamp=ts,
-            consumption=round(consumption[ts], 6),
-            generation=round(generation[ts], 6),
+            timestamp=key.astimezone(SC_TIMEZONE),
+            consumption=round(consumption[key], 6),
+            generation=round(generation[key], 6),
             unit=unit,
         )
-        for ts in sorted(consumption)
+        for key in sorted(consumption)
     ]
 
 

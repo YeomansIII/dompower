@@ -14,6 +14,8 @@ class SCIntervalRead:
 
     Attributes:
         start: Start of the interval (timezone-aware, America/New_York).
+            The second 01:00 hour of the DST fall-back day has fold=1.
+            Use ``start.astimezone(UTC)`` as a dict or set key.
         duration_seconds: Length of the interval in seconds.
         value: Raw value as reported. Electric is Wh and gas is ft³.
             Solar export registers report negative values.

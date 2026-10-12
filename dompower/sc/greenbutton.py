@@ -33,6 +33,32 @@ def bidgely_epoch_to_local(epoch: int) -> datetime:
     return datetime.fromtimestamp(epoch, UTC).replace(tzinfo=SC_TIMEZONE)
 
 
+def _read_start(epoch: int, repeated: bool) -> datetime:
+    """Return the start of a reading as a real local time.
+
+    The epochs are wall time, so DST changes need special handling:
+
+    - Fall-back (November): the two 01:00-01:59 hours have the same wall
+      times. The first reading of a wall time is EDT (fold=0). A repeated
+      reading of an ambiguous wall time is the second hour, EST (fold=1).
+    - Spring-forward (March): 02:00-02:59 does not exist. Bidgely should not
+      send these times. If it does, the UTC round trip moves the reading one
+      hour later (02:30 becomes 03:30 EDT), so its value adds to that
+      interval. The daily total stays correct, and no time is invalid.
+
+    Note: aware datetimes that differ only in ``fold`` compare equal and have
+    the same hash. Key dicts and sets by the UTC instant, not by this value.
+    """
+    local = bidgely_epoch_to_local(epoch)
+    if repeated:
+        # In the spring-forward gap, fold=1 also changes the offset. Use
+        # fold=1 only if the wall time exists, which means it is ambiguous.
+        second = local.replace(fold=1).astimezone(UTC).astimezone(SC_TIMEZONE)
+        if second.fold == 1:
+            return second
+    return local.astimezone(UTC).astimezone(SC_TIMEZONE)
+
+
 def _usage_point_id(entry: ET.Element) -> str:
     """Return the UsagePoint ID from the link hrefs of an entry."""
     for link in entry.findall("atom:link", _NS):
@@ -69,6 +95,9 @@ def parse_registers(xml_text: str) -> list[SCRegisterUsage]:
         ) from err
 
     registers: dict[str, SCRegisterUsage] = {}
+    # Epoch values seen for each register, in reading order. A repeated
+    # epoch in the fall-back hour is the second (EST) hour.
+    seen: dict[str, set[int]] = {}
     try:
         for entry in root.findall("atom:entry", _NS):
             title = entry.findtext("atom:title", default="", namespaces=_NS)
@@ -79,6 +108,7 @@ def parse_registers(xml_text: str) -> list[SCRegisterUsage]:
             register = registers.setdefault(
                 usage_point_id, SCRegisterUsage(usage_point_id=usage_point_id)
             )
+            seen_epochs = seen.setdefault(usage_point_id, set())
             for reading in entry.iterfind(
                 "atom:content/espi:IntervalBlock/espi:IntervalReading", _NS
             ):
@@ -87,9 +117,11 @@ def parse_registers(xml_text: str) -> list[SCRegisterUsage]:
                     reading.findtext("espi:timePeriod/espi:duration", "", _NS)
                 )
                 value = float(reading.findtext("espi:value", "", _NS))
+                repeated = start in seen_epochs
+                seen_epochs.add(start)
                 register.reads.append(
                     SCIntervalRead(
-                        start=bidgely_epoch_to_local(start),
+                        start=_read_start(start, repeated),
                         duration_seconds=duration,
                         value=value,
                     )
