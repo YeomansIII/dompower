@@ -24,6 +24,7 @@ from . import (
     TokenExpiredError,
     __version__,
 )
+from .sc.cli import add_sc_parsers, cmd_sc_login, cmd_sc_report, cmd_sc_usage
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,6 +43,13 @@ Examples:
 
   # Refresh tokens manually
   dompower --token-file tokens.json refresh
+
+  # South Carolina: log in once, then show usage
+  dompower sc-login -u your-username
+  dompower sc-usage --days 3
+
+  # South Carolina: write a redacted report for a GitHub issue
+  dompower sc-report
 """,
     )
 
@@ -211,6 +219,9 @@ Examples:
         action="store_true",
         help="Output as JSON",
     )
+
+    # South Carolina commands
+    add_sc_parsers(subparsers)
 
     return parser.parse_args()
 
@@ -983,7 +994,14 @@ async def async_main() -> int:
         logging.basicConfig(level=logging.WARNING)
 
     # Commands that don't require token file
-    no_token_commands = {"auth-info", "auth-helper", "login"}
+    no_token_commands = {
+        "auth-info",
+        "auth-helper",
+        "login",
+        "sc-login",
+        "sc-usage",
+        "sc-report",
+    }
 
     # Validate token-file is provided for commands that need it
     if args.command not in no_token_commands and not args.token_file:
@@ -1010,6 +1028,12 @@ async def async_main() -> int:
             return await cmd_select_account(args)
         elif args.command == "bill-forecast":
             return await cmd_bill_forecast(args)
+        elif args.command == "sc-login":
+            return await cmd_sc_login(args)
+        elif args.command == "sc-usage":
+            return await cmd_sc_usage(args)
+        elif args.command == "sc-report":
+            return await cmd_sc_report(args)
         else:
             print(f"Unknown command: {args.command}", file=sys.stderr)
             return 1

@@ -38,6 +38,22 @@ uv run ruff format dompower
 
 - **`gigya_auth.py`** - `GigyaAuthenticator`: Handles the multi-step Gigya SSO authentication flow with two-factor authentication (TFA) support. Used for initial login (not token refresh).
 
+- **`sc/`** - Dominion Energy South Carolina backend. SC uses an ASP.NET portal (`account.dominionenergysc.com`) and Bidgely for interval data, not Gigya/SEW.
+  - `sc/auth.py` - `SCAuthenticator`: portal login, TFA (`InitAuthentication`, `SendPINCode`, `VerifyPIN`), saved TFA token (`Verify2FAToken`), Bidgely bearer token. Step method names match `GigyaAuthenticator`.
+  - `sc/client.py` - `DominionSCClient`: interval usage and bill forecast. Logs in again once on 401/403.
+  - `sc/greenbutton.py` - Pure Green Button XML parser. One `SCRegisterUsage` per UsagePoint.
+  - `sc/cli.py` - `sc-login`, `sc-usage`, and `sc-report` CLI commands.
+  - `sc/report.py` - Redacted diagnostic report for SC testers. `_http.RESPONSE_RECORDER` (a `ContextVar`, `None` by default) records the responses while the report runs. The report shows values only from allowlists, then replaces known secrets, email addresses, and phone numbers. If you add a field to the report, keep it on an allowlist.
+
+### SC Notes
+
+- Use a session with `create_sc_cookie_jar()` (`quote_cookie=False`). The portal rejects quoted cookie values.
+- Bidgely epochs are local wall time encoded as UTC. The parser attaches `America/New_York` to the UTC clock time.
+- Solar export is a separate register with negative values. `registers_to_intervals` puts positive values in `consumption` and negative values in `generation`.
+- Electric values are Wh (converted to kWh). Gas values are ft³ (not converted).
+- The `X-Bidgely-Pilot-Id` header must be `10078`. Other values give estimated data.
+- The SC code is tested with fixtures only. The maintainer has no SC account.
+
 ### Authentication Flow
 
 1. Initial auth requires manual browser login (CAPTCHA protected) OR programmatic Gigya flow with TFA

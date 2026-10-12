@@ -1,6 +1,6 @@
 # dompower
 
-Async Python client for Dominion Energy API. Retrieves 30-minute interval electricity usage data.
+Async Python client for Dominion Energy API. Retrieves 30-minute interval electricity usage data for Virginia and North Carolina, and 15-minute electric and hourly gas data for [South Carolina](#south-carolina-accounts).
 
 ## Requirements
 
@@ -137,6 +137,7 @@ from datetime import date, timedelta
 import aiohttp
 from dompower import DompowerClient
 
+
 async def main():
     async with aiohttp.ClientSession() as session:
         client = DompowerClient(
@@ -155,6 +156,7 @@ async def main():
         for record in usage:
             print(f"{record.timestamp}: {record.consumption} {record.unit}")
 
+
 asyncio.run(main())
 ```
 
@@ -168,16 +170,16 @@ from dompower import DompowerClient
 
 TOKEN_FILE = Path("tokens.json")
 
+
 def load_tokens():
     with TOKEN_FILE.open() as f:
         return json.load(f)
 
+
 def save_tokens(access_token: str, refresh_token: str):
     with TOKEN_FILE.open("w") as f:
-        json.dump({
-            "access_token": access_token,
-            "refresh_token": refresh_token
-        }, f)
+        json.dump({"access_token": access_token, "refresh_token": refresh_token}, f)
+
 
 async def main():
     tokens = load_tokens()
@@ -199,6 +201,7 @@ async def main():
 import aiohttp
 from dompower import GigyaAuthenticator, TFAProvider
 
+
 async def login_with_tfa():
     async with aiohttp.ClientSession() as session:
         auth = GigyaAuthenticator(session)
@@ -208,8 +211,7 @@ async def login_with_tfa():
 
         # Submit credentials
         result = await auth.async_submit_credentials(
-            "your.email@example.com",
-            "your_password"
+            "your.email@example.com", "your_password"
         )
 
         if result.tfa_required:
@@ -235,6 +237,7 @@ async def login_with_tfa():
 ```python
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from dompower import DompowerClient
+
 
 async def async_setup_entry(hass, entry):
     session = async_get_clientsession(hass)
@@ -314,9 +317,9 @@ GigyaAuthenticator(
 @dataclass(frozen=True)
 class IntervalUsageData:
     timestamp: datetime  # Start of 30-minute interval
-    consumption: float   # kWh consumed
-    generation: float    # kWh excess generation returned to grid
-    unit: str            # "kWh"
+    consumption: float  # kWh consumed
+    generation: float  # kWh excess generation returned to grid
+    unit: str  # "kWh"
 ```
 
 ### Exceptions
@@ -336,6 +339,101 @@ CannotConnectError           # Network issues
 ApiError                     # API returned error
   RateLimitError             # Rate limited (429)
 ```
+
+## South Carolina Accounts
+
+Dominion Energy South Carolina uses a different portal
+(`account.dominionenergysc.com`) and a different data vendor (Bidgely).
+Use `dompower.sc` for SC accounts. `DompowerClient` and `GigyaAuthenticator`
+work only for Virginia and North Carolina.
+
+### CLI
+
+```bash
+# Log in once. This does TFA and saves a TFA token to ~/.dompower/sc.json.
+# Use your SC portal username. It is not always your email address.
+dompower sc-login -u your-username
+
+# Show the account, meter registers, daily totals, and bill forecast.
+# Set DOMPOWER_SC_PASSWORD to skip the password prompt.
+dompower sc-usage --days 3
+dompower sc-usage --days 3 --gas --json
+
+# Write a redacted diagnostic report to dompower-sc-report.txt.
+dompower sc-report
+```
+
+### Diagnostic report
+
+`dompower sc-report` logs in with the saved TFA token and writes a plain
+text file. You can attach it to a GitHub issue. Read the file before you
+post it.
+
+The report does not contain your username, password, TFA token, cookies,
+email address, phone number, service address, account number, or Bidgely
+user ID. It shows:
+
+- Each request (path and HTTP status) and the JSON field names of each
+  response. Most values show only as `<string, N chars>` or `<number>`.
+- The meter registers, readings per day, and daily and hourly totals.
+- The structure of the Green Button XML and some raw readings. Entry titles
+  show only if they are generic Green Button titles, such as
+  "Interval Consumption".
+- The bill forecast amounts.
+
+If a step fails, the report still includes the error and the responses up
+to that step.
+
+### Library
+
+The portal uses session cookies. Use a dedicated session with
+`create_sc_cookie_jar()`. The default cookie jar quotes cookie values, and the
+portal then rejects the session.
+
+```python
+import aiohttp
+from datetime import date
+from dompower import DominionSCClient, SCAuthenticator, create_sc_cookie_jar
+
+async with aiohttp.ClientSession(cookie_jar=create_sc_cookie_jar()) as session:
+    # First login: interactive TFA gives a TFA token. Save it.
+    auth = SCAuthenticator(session)
+    result = await auth.async_submit_credentials(username, password)
+    if result.tfa_required:
+        targets = await auth.async_get_tfa_options()
+        await auth.async_send_tfa_code(targets[0])
+        tfa_token = await auth.async_verify_tfa_code(input("Code: "))
+    sc_session = await auth.async_complete_login()
+
+    # Later logins: the saved TFA token skips TFA.
+    client = DominionSCClient(session, username, password, tfa_token=tfa_token)
+    await client.async_login()
+    usage = await client.async_get_interval_usage(date(2026, 8, 1), date(2026, 8, 7))
+    forecast = await client.async_get_bill_forecast()
+```
+
+SC data differs from VA/NC data:
+
+- Electric intervals are 15 minutes (kWh). Gas intervals are 1 hour (ft³).
+  Use `meter_type=MeterType.GAS` for gas.
+- Solar export is a separate meter register with negative values. The client
+  puts positive values in `consumption` and negative values in `generation`.
+  `async_get_register_usage()` returns the raw readings for each register.
+- Timestamps are in `America/New_York`. On the DST fall-back day, the two
+  01:00-01:59 hours have the same wall times. The second hour has `fold=1`
+  (EST), so the day has 25 hours (100 electric intervals). Datetimes that
+  differ only in `fold` compare equal. To group or deduplicate intervals,
+  use `timestamp.astimezone(UTC)` as the key. On the spring-forward day,
+  02:00-02:59 does not exist. If Bidgely sends readings for these times,
+  the client moves them to 03:00-03:59 EDT and adds them to those intervals.
+- `SCBillForecast` has the cost to date, the forecasted cost, and last year's
+  cost. The dollar values include electric and gas together.
+- A login with more than one account raises `ApiError`.
+- If the TFA token is not accepted, `async_login()` raises `TFARequiredError`.
+
+The SC backend is a port of
+[hype8912/dominion-sc-power](https://github.com/hype8912/dominion-sc-power)
+(Apache-2.0). See `NOTICE`.
 
 ## Data Format
 

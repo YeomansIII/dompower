@@ -4,6 +4,9 @@ This library provides an async client for interacting with Dominion Energy's
 API to retrieve energy usage data. It is designed to work seamlessly with
 Home Assistant integrations.
 
+South Carolina accounts use a different platform. See ``dompower.sc`` and
+``DominionSCClient``.
+
 Example:
     import aiohttp
     from dompower import DompowerClient
@@ -61,8 +64,17 @@ from .models import (
     UsageData,
     UsageResolution,
 )
+from .sc import (
+    DominionSCClient,
+    SCAccount,
+    SCAuthenticator,
+    SCBillForecast,
+    SCRegisterUsage,
+    SCSession,
+    create_sc_cookie_jar,
+)
 
-__version__ = "0.2.2"
+__version__ = "0.3.0a1"
 
 __all__ = [
     "LOGIN_URL",
@@ -76,6 +88,7 @@ __all__ = [
     "BrowserAuthRequiredError",
     "CannotConnectError",
     "CustomerInfo",
+    "DominionSCClient",
     "DompowerClient",
     "DompowerError",
     "GigyaAuthenticator",
@@ -88,6 +101,11 @@ __all__ = [
     "MeterDevice",
     "MeterType",
     "RateLimitError",
+    "SCAccount",
+    "SCAuthenticator",
+    "SCBillForecast",
+    "SCRegisterUsage",
+    "SCSession",
     "ServiceAddress",
     "ServiceType",
     "TFAExpiredError",
@@ -102,4 +120,5 @@ __all__ = [
     "UsageData",
     "UsageResolution",
     "__version__",
+    "create_sc_cookie_jar",
 ]

@@ -1,0 +1,14 @@
+dompower
+Copyright (c) Jason Yeomans. Licensed under the MIT License (see LICENSE).
+
+The South Carolina backend (dompower/sc/) is a port of code from these
+projects, which are licensed under the Apache License, Version 2.0:
+
+- dominion-sc-power, https://github.com/hype8912/dominion-sc-power
+- dominion-sc-power (original), https://github.com/sctigercat1/dominion-sc-power
+
+You can get a copy of the Apache License, Version 2.0 at
+http://www.apache.org/licenses/LICENSE-2.0
+
+The ported code was changed: it was rewritten to use the dompower models,
+exceptions, and HTTP handling.
